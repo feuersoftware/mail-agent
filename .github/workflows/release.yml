@@ -39,7 +39,7 @@ jobs:
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          
+
           Write-Host "Checking for outdated packages (including transitive)..."
           $outdatedJson = & dotnet list MailAgent/MailAgent.csproj package --outdated --include-transitive --format json 2>&1
           $exitCode = $LASTEXITCODE
