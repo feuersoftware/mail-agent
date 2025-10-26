@@ -1,0 +1,2 @@
+sc stop FeuerSoftwareMailAgent
+sc delete FeuerSoftwareMailAgent

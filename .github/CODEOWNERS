@@ -1,0 +1,17 @@
+# GitHub workflows / CI (DevOps)
+.github/workflows/ @feuersoftware/admins
+
+# C# source files — assume dotnet team
+*.cs @feuersoftware/admins
+*.csproj @feuersoftware/admins
+
+# Project specific folder ownership
+/MailAgent/ @feuersoftware/admins
+
+# Scripts and installers
+/*.bat @feuersoftware/admins
+/install.bat @feuersoftware/admins
+/uninstall.bat @feuersoftware/admins
+
+# Default owner (fallback)
+* @feuersoftware/admins

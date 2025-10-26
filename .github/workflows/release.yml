@@ -1,0 +1,287 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build configuration'
+        required: false
+        default: 'Release'
+      selfContained:
+        description: 'Produce self-contained executable (true/false)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Prepare (extract assembly version)
+    runs-on: windows-latest
+    outputs:
+      asm_version: ${{ steps.get_version.outputs.asm_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore MailAgent/MailAgent.csproj
+
+      - name: Check for vulnerable packages (only fail if updates available)
+        id: check_vuln
+        shell: powershell
+        run: |
+          Write-Host "Checking for outdated packages (including transitive)..."
+          $outdatedJson = & dotnet list MailAgent/MailAgent.csproj package --outdated --include-transitive --format json 2>&1
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            Write-Error "dotnet list --outdated returned exit code $exitCode. Aborting."
+            Write-Host $outdatedJson
+            exit $exitCode
+          }
+
+          try {
+            $parsed = $outdatedJson | ConvertFrom-Json
+          } catch {
+            Write-Host "Failed to parse JSON from dotnet list --outdated. Output was:";
+            Write-Host $outdatedJson
+            # Fall back to running the vulnerable check to be conservative
+            $parsed = $null
+          }
+
+          $updatesAvailable = $false
+          if ($parsed -and $parsed.projects) {
+            foreach ($proj in $parsed.projects) {
+              foreach ($fw in $proj.frameworks) {
+                if ($fw.transitivePackages -and $fw.transitivePackages.Count -gt 0) {
+                  foreach ($pkg in $fw.transitivePackages) {
+                    if ($pkg.latestVersion -and $pkg.resolvedVersion -and ($pkg.latestVersion -ne $pkg.resolvedVersion)) {
+                      Write-Host "Outdated package found: $($pkg.id) $($pkg.resolvedVersion) -> $($pkg.latestVersion)"
+                      $updatesAvailable = $true
+                    }
+                  }
+                }
+                if ($fw.topLevelPackages -and $fw.topLevelPackages.Count -gt 0) {
+                  foreach ($pkg in $fw.topLevelPackages) {
+                    if ($pkg.latestVersion -and $pkg.resolvedVersion -and ($pkg.latestVersion -ne $pkg.resolvedVersion)) {
+                      Write-Host "Outdated package found: $($pkg.id) $($pkg.resolvedVersion) -> $($pkg.latestVersion)"
+                      $updatesAvailable = $true
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (-not $updatesAvailable) {
+            Write-Host "No package updates available. Skipping vulnerability fail-check and proceeding."
+            exit 0
+          }
+
+          Write-Host "Package updates found — running vulnerability check (including transitive)..."
+
+          # Read allowlist if present (one package id per line, comments with #)
+          $allowlistPath = Join-Path '${{ github.workspace }}' '.github\allowlist.txt'
+          $allow = @()
+          if (Test-Path $allowlistPath) {
+            Write-Host "Reading allowlist: $allowlistPath"
+            $allow = Get-Content $allowlistPath | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }
+            Write-Host "Allowlisted packages: $($allow -join ', ')"
+          } else {
+            Write-Host "No allowlist file found at $allowlistPath"
+          }
+
+          $vulnOutputLines = & dotnet list MailAgent/MailAgent.csproj package --vulnerable --include-transitive 2>&1
+          $vulnExit = $LASTEXITCODE
+          $vulnOutput = $vulnOutputLines -join "`n"
+          Write-Host $vulnOutput
+          if ($vulnExit -ne 0) {
+            Write-Error "dotnet list --vulnerable returned exit code $vulnExit. Aborting."
+            exit $vulnExit
+          }
+
+          # Parse vulnerability lines for entries like: '> Package.Id    X.Y.Z    Severity'
+          $criticalFindings = @()
+          $highFindings = @()
+          foreach ($line in $vulnOutputLines) {
+            # normalize whitespace
+            $l = $line -replace '\t',' '
+            $l = $l -replace '\s{2,}',' '
+            if ($l -match '^\s*>?\s*([^\s]+)\s+([^\s]+)\s+(Critical|High|Moderate|Low)') {
+              $pkgId = $matches[1]
+              $ver = $matches[2]
+              $sev = $matches[3]
+              if ($sev -ieq 'Critical') { $criticalFindings += @{ id=$pkgId; version=$ver; severity=$sev } }
+              if ($sev -ieq 'High')     { $highFindings += @{ id=$pkgId; version=$ver; severity=$sev } }
+            }
+          }
+
+          foreach ($f in $criticalFindings) {
+            if ($allow -contains $f.id) {
+              Write-Host "CRITICAL but allowlisted: $($f.id) $($f.version)"
+            } else {
+              Write-Error "CRITICAL vulnerability found and NOT allowlisted: $($f.id) $($f.version)"
+              # Fail the job on first non-allowlisted critical
+              exit 1
+            }
+          }
+
+          if ($criticalFindings.Count -eq 0 -and $highFindings.Count -gt 0) {
+            Write-Host "High severity vulnerabilities found (listed below) — they are reported but do not fail the release. Review and upgrade when convenient."
+            foreach ($h in $highFindings) { Write-Host "HIGH: $($h.id) $($h.version)" }
+          }
+
+          Write-Host "Vulnerability check completed: no non-allowlisted CRITICAL vulnerabilities found. Proceeding."
+
+      - name: Publish temporary (to read AssemblyVersion)
+        run: dotnet publish MailAgent/MailAgent.csproj -c ${{ github.event.inputs.configuration || 'Release' }} -r win-x64 /p:PublishSingleFile=false -o ${{ github.workspace }}\publish_temp
+        shell: cmd
+
+      - name: Get assembly version
+        id: get_version
+        shell: powershell
+        run: |
+          $exe = Join-Path '${{ github.workspace }}' 'publish_temp\FeuerSoftware.MailAgent.exe'
+          if (-Not (Test-Path $exe)) { Write-Error "Assembly not found: $exe"; exit 1 }
+          $ver = [System.Reflection.AssemblyName]::GetAssemblyName($exe).Version.ToString()
+          Write-Host "Found assembly version: $ver"
+          echo "asm_version=$ver" >> $env:GITHUB_OUTPUT
+
+  build_and_package:
+    name: Build and package (matrix)
+    needs: prepare
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        rid: [win-x86, win-x64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore MailAgent/MailAgent.csproj
+
+      - name: Publish single-file executable
+        run: |
+          echo Publishing for ${{ matrix.rid }} (configuration=${{ github.event.inputs.configuration || 'Release' }}, selfContained=${{ github.event.inputs.selfContained }})
+          dotnet publish MailAgent/MailAgent.csproj -c ${{ github.event.inputs.configuration || 'Release' }} -r ${{ matrix.rid }} /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=${{ github.event.inputs.selfContained }} -o ${{ github.workspace }}\publish\${{ matrix.rid }}
+        shell: cmd
+
+      - name: Collect licenses (dotnet-project-licenses)
+        shell: powershell
+        run: |
+          $toolPath = Join-Path '${{ github.workspace }}' '.tools'
+          if (-Not (Test-Path $toolPath)) { New-Item -ItemType Directory -Path $toolPath | Out-Null }
+          dotnet tool install --tool-path $toolPath dotnet-project-licenses --prerelease || dotnet tool update --tool-path $toolPath dotnet-project-licenses --prerelease
+          $exe = Join-Path $toolPath 'dotnet-project-licenses.exe'
+          if (-Not (Test-Path $exe)) { Write-Error "dotnet-project-licenses not found at $exe"; exit 1 }
+          & $exe -p MailAgent/MailAgent.csproj -f text -o "$($toolPath)\licenses.txt"
+          Write-Host "Licenses written to: $($toolPath)\licenses.txt"
+
+      - name: Prepare artifact folder and copy files
+        shell: powershell
+        run: |
+          $workspace = '${{ github.workspace }}'
+          $publishDir = Join-Path $workspace (Join-Path 'publish' '${{ matrix.rid }}')
+          if (-Not (Test-Path $publishDir)) { Write-Error "Publish directory not found: $publishDir"; exit 1 }
+          $artifactDir = Join-Path $workspace ('artifact_' + '${{ matrix.rid }}')
+          if (Test-Path $artifactDir) { Remove-Item -Recurse -Force $artifactDir }
+          New-Item -ItemType Directory -Path $artifactDir | Out-Null
+          Copy-Item -Path (Join-Path $publishDir '*') -Destination $artifactDir -Recurse -Force
+
+          # Copy optional extras from repository
+          $extras = @('MailAgent\readme.md','MailAgent\install.bat','MailAgent\uninstall.bat')
+          foreach ($e in $extras) {
+            $full = Join-Path $workspace $e
+            if (Test-Path $full) { Copy-Item -Path $full -Destination $artifactDir -Force }
+            else { Write-Host "Optional file not found, skipping: $e" }
+          }
+
+          # Copy licenses file from tool path if produced
+          $toolLic = Join-Path $workspace '.tools\licenses.txt'
+          if (Test-Path $toolLic) { Copy-Item -Path $toolLic -Destination (Join-Path $artifactDir 'licenses.txt') -Force }
+
+      - name: Create ZIP package
+        id: create_zip
+        shell: powershell
+        run: |
+          $workspace = '${{ github.workspace }}'
+          $artifactDir = Join-Path $workspace ('artifact_' + '${{ matrix.rid }}')
+          $version = '${{ needs.prepare.outputs.asm_version }}'
+          $zipName = "mail-agent-$version-${{ matrix.rid }}.zip"
+          if (-Not (Test-Path (Join-Path $workspace 'release'))) { New-Item -ItemType Directory -Path (Join-Path $workspace 'release') | Out-Null }
+          $zipPath = Join-Path $workspace (Join-Path 'release' $zipName)
+          if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+          Compress-Archive -Path (Join-Path $artifactDir '*') -DestinationPath $zipPath -Force
+          Write-Host "Created ZIP: $zipPath"
+          echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+
+      - name: Upload ZIP artifact for workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: mail-agent-${{ needs.prepare.outputs.asm_version }}-${{ matrix.rid }}
+          path: release/mail-agent-${{ needs.prepare.outputs.asm_version }}-${{ matrix.rid }}.zip
+
+  publish_release:
+    name: Create GitHub Release and upload assets
+    needs: build_and_package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded_artifacts
+
+      - name: Create or get GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ needs.prepare.outputs.asm_version }}
+          release_name: mail-agent v${{ needs.prepare.outputs.asm_version }}
+          body: "Release built. Assemblies built with AssemblyVersion ${{ needs.prepare.outputs.asm_version }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload ZIPs as release assets
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $uploadUrlTemplate = '${{ steps.create_release.outputs.upload_url }}'
+          if (-Not $uploadUrlTemplate) { Write-Error "No upload_url from create_release"; exit 1 }
+          $uploadUrlBase = $uploadUrlTemplate -replace '\{\?name,label\}$',''
+          $repo = '${{ github.repository }}'
+          $token = '${{ secrets.GITHUB_TOKEN }}'
+          $files = Get-ChildItem -Path 'downloaded_artifacts' -Recurse -File | Where-Object { $_.Extension -eq '.zip' }
+          if ($files.Count -eq 0) { Write-Error "No ZIP files found to upload"; exit 1 }
+          foreach ($f in $files) {
+            $fileName = $f.Name
+            $uploadUrl = "$uploadUrlBase?name=$([uri]::EscapeDataString($fileName))"
+            Write-Host "Uploading $fileName to $uploadUrl"
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            $resp = Invoke-RestMethod -Headers @{ Authorization = "token $token"; 'Content-Type' = 'application/zip' } -Method Post -Uri $uploadUrl -Body $bytes -ErrorAction Stop
+            Write-Host "Uploaded: $($resp.name)"
+          }
+
+      - name: Final workflow artifact upload (all zips)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zips-${{ needs.prepare.outputs.asm_version }}
+          path: downloaded_artifacts

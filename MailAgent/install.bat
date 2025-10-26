@@ -1,0 +1,1 @@
+sc create FeuerSoftwareMailAgent binPath= %cd%\FeuerSoftware.MailAgent.exe

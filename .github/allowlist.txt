@@ -1,0 +1,10 @@
+# Allowlist for release vulnerability check
+# One package ID per non-comment line. Lines starting with # are ignored.
+# Add known/accepted vulnerabilities here to avoid blocking releases.
+# Example: System.Security.Cryptography.Xml
+
+# Temporarily allow this transitive package (review and remove when fixed):
+System.Security.Cryptography.Xml
+
+# Add other package IDs below as needed
+

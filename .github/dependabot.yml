@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/MailAgent"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Optionally add reviewers, labels, or auto-merge rules here
+    # reviewers:
+    #   - your-team
+    # labels:
+    #   - dependencies
+
