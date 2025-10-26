@@ -236,7 +236,7 @@ jobs:
 
   publish_release:
     name: Create GitHub Release and upload assets
-    needs: build_and_package
+    needs: [prepare, build_and_package]
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -247,38 +247,31 @@ jobs:
         with:
           path: downloaded_artifacts
 
-      - name: Create or get GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        with:
-          tag_name: v${{ needs.prepare.outputs.asm_version }}
-          release_name: mail-agent v${{ needs.prepare.outputs.asm_version }}
-          body: "Release built. Assemblies built with AssemblyVersion ${{ needs.prepare.outputs.asm_version }}"
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload ZIPs as release assets
+      - name: Create GitHub Release and upload assets
         shell: powershell
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $uploadUrlTemplate = '${{ steps.create_release.outputs.upload_url }}'
-          if (-Not $uploadUrlTemplate) { Write-Error "No upload_url from create_release"; exit 1 }
-          $uploadUrlBase = $uploadUrlTemplate -replace '\{\?name,label\}$',''
-          $repo = '${{ github.repository }}'
-          $token = '${{ secrets.GITHUB_TOKEN }}'
+          $version = '${{ needs.prepare.outputs.asm_version }}'
+          $tag = "v$version"
+          $releaseTitle = "mail-agent v$version"
+          $releaseBody = "Release built. Assemblies built with AssemblyVersion $version"
+          
+          # Collect all ZIP files to upload
           $files = Get-ChildItem -Path 'downloaded_artifacts' -Recurse -File | Where-Object { $_.Extension -eq '.zip' }
           if ($files.Count -eq 0) { Write-Error "No ZIP files found to upload"; exit 1 }
-          foreach ($f in $files) {
-            $fileName = $f.Name
-            $uploadUrl = "$uploadUrlBase?name=$([uri]::EscapeDataString($fileName))"
-            Write-Host "Uploading $fileName to $uploadUrl"
-            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
-            $resp = Invoke-RestMethod -Headers @{ Authorization = "token $token"; 'Content-Type' = 'application/zip' } -Method Post -Uri $uploadUrl -Body $bytes -ErrorAction Stop
-            Write-Host "Uploaded: $($resp.name)"
-          }
+          
+          Write-Host "Found $($files.Count) ZIP file(s) to upload"
+          $files | ForEach-Object { Write-Host "  - $($_.FullName)" }
+          
+          # Build the gh release create command with all files
+          $fileArgs = $files | ForEach-Object { $_.FullName }
+          
+          # Create release with all assets
+          Write-Host "Creating release $tag with title: $releaseTitle"
+          gh release create $tag $fileArgs --title $releaseTitle --notes $releaseBody
+          
+          Write-Host "Release created successfully"
 
       - name: Final workflow artifact upload (all zips)
         uses: actions/upload-artifact@v4
