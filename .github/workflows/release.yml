@@ -84,20 +84,20 @@ jobs:
           $outDir = Join-Path $workspace (Join-Path 'publish' $rid)
           Write-Host "Publishing for $rid (ReleaseVersion=${{ needs.version.outputs.release_version }})"
           dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true -o $outDir
-      - name: Collect licenses
-        shell: pwsh
-        run: |
-          $workspace='${{ github.workspace }}'
-          $toolPath = Join-Path $workspace '.tools'
-          if (-Not (Test-Path $toolPath)) { New-Item -ItemType Directory -Path $toolPath | Out-Null }
-          dotnet tool install --tool-path $toolPath nuget-license --version 4.0.0 || dotnet tool update --tool-path $toolPath nuget-license --version 4.0.0
-          $exe = Join-Path $toolPath 'nuget-license.exe'
-          if (-Not (Test-Path $exe)) { $exe = Join-Path $toolPath 'nuget-license' }
-          if (-Not (Test-Path $exe)) { Write-Error "nuget-license not found at $toolPath"; exit 1 }
-          $outFile = Join-Path $toolPath 'licenses.md'
-          & $exe -i MailAgent/MailAgent.csproj -fo $outFile -o Markdown
-          if (-Not (Test-Path $outFile)) { Write-Error "License file not generated"; exit 1 }
-          Write-Host "Licenses collected at $outFile"
+#      - name: Collect licenses
+#        shell: pwsh
+#        run: |
+#          $workspace='${{ github.workspace }}'
+#          $toolPath = Join-Path $workspace '.tools'
+#          if (-Not (Test-Path $toolPath)) { New-Item -ItemType Directory -Path $toolPath | Out-Null }
+#          dotnet tool install --tool-path $toolPath nuget-license --version 4.0.0 || dotnet tool update --tool-path $toolPath nuget-license --version 4.0.0
+#          $exe = Join-Path $toolPath 'nuget-license.exe'
+#          if (-Not (Test-Path $exe)) { $exe = Join-Path $toolPath 'nuget-license' }
+#          if (-Not (Test-Path $exe)) { Write-Error "nuget-license not found at $toolPath"; exit 1 }
+#          $outFile = Join-Path $toolPath 'licenses.md'
+#          & $exe -i MailAgent/MailAgent.csproj -fo $outFile -o Markdown
+#          if (-Not (Test-Path $outFile)) { Write-Error "License file not generated"; exit 1 }
+#          Write-Host "Licenses collected at $outFile"
       - name: Prepare artifact folder
         shell: pwsh
         run: |
@@ -114,8 +114,8 @@ jobs:
           Copy-Item -Path (Join-Path $publishDir '*') -Destination $artifactDir -Recurse -Force
           $extras = @('MailAgent/readme.md','MailAgent/install.bat','MailAgent/uninstall.bat')
           foreach ($e in $extras) { $full = Join-Path $workspace $e; if (Test-Path $full) { Copy-Item -Path $full -Destination $artifactDir -Force } }
-          $toolLic = Join-Path $workspace '.tools/licenses.md'
-          if (Test-Path $toolLic) { Copy-Item -Path $toolLic -Destination (Join-Path $artifactDir 'licenses.md') -Force }
+#          $toolLic = Join-Path $workspace '.tools/licenses.md'
+#          if (Test-Path $toolLic) { Copy-Item -Path $toolLic -Destination (Join-Path $artifactDir 'licenses.md') -Force }
       - name: Create ZIP package
         shell: pwsh
         run: |
