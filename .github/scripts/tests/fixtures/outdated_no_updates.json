@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "parameters": "--outdated --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "MailAgent/MailAgent.csproj",
+      "frameworks": [
+        {
+          "framework": "net9.0",
+          "transitivePackages": [],
+          "topLevelPackages": []
+        }
+      ]
+    }
+  ]
+}
+

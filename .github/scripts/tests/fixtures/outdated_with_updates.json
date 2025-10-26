@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "parameters": "--outdated --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "MailAgent/MailAgent.csproj",
+      "frameworks": [
+        {
+          "framework": "net9.0",
+          "transitivePackages": [
+            { "id": "System.Security.Cryptography.Xml", "resolvedVersion": "4.4.0", "latestVersion": "9.0.10" },
+            { "id": "BouncyCastle.Cryptography", "resolvedVersion": "2.6.1", "latestVersion": "2.6.2" }
+          ],
+          "topLevelPackages": []
+        }
+      ]
+    }
+  ]
+}
+
