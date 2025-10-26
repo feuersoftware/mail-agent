@@ -52,7 +52,7 @@ jobs:
           try {
             $parsed = $outdatedJson | ConvertFrom-Json
             if (-not $parsed) {
-              Write-Error "Failed to parse JSON from dotnet list --outdated (null result)."
+              Write-Error "Failed to parse JSON from dotnet list --outdated (empty or invalid JSON returned)."
               Write-Host $outdatedJson
               exit 1
             }
