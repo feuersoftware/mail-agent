@@ -37,6 +37,9 @@ jobs:
         id: check_vuln
         shell: powershell
         run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          
           Write-Host "Checking for outdated packages (including transitive)..."
           $outdatedJson = & dotnet list MailAgent/MailAgent.csproj package --outdated --include-transitive --format json 2>&1
           $exitCode = $LASTEXITCODE
@@ -48,11 +51,15 @@ jobs:
 
           try {
             $parsed = $outdatedJson | ConvertFrom-Json
+            if (-not $parsed) {
+              Write-Error "Failed to parse JSON from dotnet list --outdated (null result)."
+              Write-Host $outdatedJson
+              exit 1
+            }
           } catch {
-            Write-Host "Failed to parse JSON from dotnet list --outdated. Output was:";
+            Write-Error "Failed to parse JSON from dotnet list --outdated."
             Write-Host $outdatedJson
-            # Fall back to running the vulnerable check to be conservative
-            $parsed = $null
+            exit 1
           }
 
           $updatesAvailable = $false
@@ -137,6 +144,7 @@ jobs:
             foreach ($h in $highFindings) { Write-Host "HIGH: $($h.id) $($h.version)" }
           }
 
+          Write-Host "Summary: Critical=$($criticalFindings.Count) High=$($highFindings.Count)"
           Write-Host "Vulnerability check completed: no non-allowlisted CRITICAL vulnerabilities found. Proceeding."
 
       - name: Publish temporary (to read AssemblyVersion)
