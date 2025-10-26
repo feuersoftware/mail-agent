@@ -265,11 +265,11 @@ jobs:
           $files | ForEach-Object { Write-Host "  - $($_.FullName)" }
           
           # Build the gh release create command with all files
-          $fileArgs = $files | ForEach-Object { $_.FullName }
+          $fileArgs = @($files | ForEach-Object { $_.FullName })
           
           # Create release with all assets
           Write-Host "Creating release $tag with title: $releaseTitle"
-          gh release create $tag $fileArgs --title $releaseTitle --notes $releaseBody
+          & gh release create $tag @fileArgs --title $releaseTitle --notes $releaseBody
           
           Write-Host "Release created successfully"
 
