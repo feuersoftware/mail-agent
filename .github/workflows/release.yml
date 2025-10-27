@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  workflow_dispatch: {}
   push:
     tags:
       - 'v*'
@@ -22,6 +21,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Ensure tag commit is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag-Commit ist nicht Teil von main. Abbruch." >&2
+            exit 1
+          fi
+          echo "Tag-Commit liegt auf main."
       - name: Validate tag and set version
         id: set_version
         shell: bash
@@ -84,20 +93,6 @@ jobs:
           $outDir = Join-Path $workspace (Join-Path 'publish' $rid)
           Write-Host "Publishing for $rid (ReleaseVersion=${{ needs.version.outputs.release_version }})"
           dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true -o $outDir
-#      - name: Collect licenses
-#        shell: pwsh
-#        run: |
-#          $workspace='${{ github.workspace }}'
-#          $toolPath = Join-Path $workspace '.tools'
-#          if (-Not (Test-Path $toolPath)) { New-Item -ItemType Directory -Path $toolPath | Out-Null }
-#          dotnet tool install --tool-path $toolPath nuget-license --version 4.0.0 || dotnet tool update --tool-path $toolPath nuget-license --version 4.0.0
-#          $exe = Join-Path $toolPath 'nuget-license.exe'
-#          if (-Not (Test-Path $exe)) { $exe = Join-Path $toolPath 'nuget-license' }
-#          if (-Not (Test-Path $exe)) { Write-Error "nuget-license not found at $toolPath"; exit 1 }
-#          $outFile = Join-Path $toolPath 'licenses.md'
-#          & $exe -i MailAgent/MailAgent.csproj -fo $outFile -o Markdown
-#          if (-Not (Test-Path $outFile)) { Write-Error "License file not generated"; exit 1 }
-#          Write-Host "Licenses collected at $outFile"
       - name: Prepare artifact folder
         shell: pwsh
         run: |
@@ -114,8 +109,6 @@ jobs:
           Copy-Item -Path (Join-Path $publishDir '*') -Destination $artifactDir -Recurse -Force
           $extras = @('MailAgent/readme.md','MailAgent/install.bat','MailAgent/uninstall.bat')
           foreach ($e in $extras) { $full = Join-Path $workspace $e; if (Test-Path $full) { Copy-Item -Path $full -Destination $artifactDir -Force } }
-#          $toolLic = Join-Path $workspace '.tools/licenses.md'
-#          if (Test-Path $toolLic) { Copy-Item -Path $toolLic -Destination (Join-Path $artifactDir 'licenses.md') -Force }
       - name: Create ZIP package
         shell: pwsh
         run: |
