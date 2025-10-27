@@ -1,0 +1,140 @@
+name: PR Build
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Set fixed version
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: 3.0.2
+    steps:
+      - name: Fixed version
+        run: echo "Using fixed version 3.0.2"
+
+  build_and_package:
+    name: Build and package (matrix)
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x86
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
+          - os: macos-13
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore MailAgent/MailAgent.csproj
+      - name: Publish single-file executable
+        shell: pwsh
+        run: |
+          $rid='${{ matrix.rid }}'
+          $workspace='${{ github.workspace }}'
+          $outDir = Join-Path $workspace (Join-Path 'publish' $rid)
+          Write-Host "Publishing for $rid (FixedVersion=${{ needs.version.outputs.release_version }})"
+          dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true /p:Version='${{ needs.version.outputs.release_version }}' -o $outDir
+      - name: Collect licenses
+        id: collect_licenses
+        uses: ./.github/actions/collect-licenses
+        with:
+          project: MailAgent/MailAgent.csproj
+          output-file: licenses.md
+          include-transitive: 'true'
+          ignore-errors: 'true'
+      - name: Prepare artifact folder
+        shell: pwsh
+        run: |
+          $workspace='${{ github.workspace }}'
+          $rid='${{ matrix.rid }}'
+          $publishDir = Join-Path $workspace (Join-Path 'publish' $rid)
+          if (-Not (Test-Path $publishDir)) { Write-Error "Publish directory not found: $publishDir"; exit 1 }
+          $exeName = if ($rid -like 'win-*') { 'FeuerSoftware.MailAgent.exe' } else { 'FeuerSoftware.MailAgent' }
+          $exePath = Join-Path $publishDir $exeName
+          if (-Not (Test-Path $exePath)) { Write-Error "Expected executable not found: $exePath"; exit 1 }
+          $artifactDir = Join-Path $workspace ('artifact_' + $rid)
+          if (Test-Path $artifactDir) { Remove-Item -Recurse -Force $artifactDir }
+          New-Item -ItemType Directory -Path $artifactDir | Out-Null
+          Copy-Item -Path (Join-Path $publishDir '*') -Destination $artifactDir -Recurse -Force
+          $extras = @('MailAgent/readme.md','MailAgent/install.bat','MailAgent/uninstall.bat')
+          foreach ($e in $extras) { $full = Join-Path $workspace $e; if (Test-Path $full) { Copy-Item -Path $full -Destination $artifactDir -Force } }
+          $licenseFile = Join-Path $workspace 'licenses.md'
+          if (Test-Path $licenseFile) { Copy-Item -Path $licenseFile -Destination (Join-Path $artifactDir 'licenses.md') -Force }
+      - name: Create ZIP package
+        shell: pwsh
+        run: |
+          $workspace='${{ github.workspace }}'
+          $rid='${{ matrix.rid }}'
+          $artifactDir = Join-Path $workspace ('artifact_' + $rid)
+          $version='${{ needs.version.outputs.release_version }}'
+          $zipName = "mail-agent-$version-$rid.zip"
+          $releaseDir = Join-Path $workspace 'release'
+          if (-Not (Test-Path $releaseDir)) { New-Item -ItemType Directory -Path $releaseDir | Out-Null }
+          $zipPath = Join-Path $releaseDir $zipName
+          if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+          Compress-Archive -Path (Join-Path $artifactDir '*') -DestinationPath $zipPath -Force
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-mail-agent-${{ needs.version.outputs.release_version }}-${{ matrix.rid }}
+          path: release/mail-agent-${{ needs.version.outputs.release_version }}-${{ matrix.rid }}.zip
+
+  integrity_test:
+    name: Integrity (Checksums)
+    needs: [version, build_and_package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build_artifacts
+      - name: Generate SHA256 checksums
+        id: gen_checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART_DIR=build_artifacts
+          mapfile -t ZIP_FILES < <(find "$ART_DIR" -type f -name '*.zip')
+          if [ ${#ZIP_FILES[@]} -eq 0 ]; then echo "No ZIP files found" >&2; exit 1; fi
+          OUT_FILE="$ART_DIR/checksums.sha256.txt"
+          rm -f "$OUT_FILE"
+            for z in "${ZIP_FILES[@]}"; do sha256sum "$z" | awk '{print tolower($1)"  "$2}' >> "$OUT_FILE"; done
+          echo "checksums_file=$OUT_FILE" >> $GITHUB_OUTPUT
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-assets
+          path: build_artifacts/checksums.sha256.txt
+

@@ -10,9 +10,29 @@ inputs:
     required: false
     default: 'licenses.md'
   nuget-license-version:
-    description: 'Version of the nuget-license tool'
+    description: 'Version der nuget-license Tool-Installation'
     required: false
     default: '4.0.0'
+  ignore-errors:
+    description: 'Treat non-zero exit codes from nuget-license as warnings instead of failing'
+    required: false
+    default: 'true'
+  include-transitive:
+    description: 'Include transitive dependencies'
+    required: false
+    default: 'false'
+  override-package-info-file:
+    description: 'JSON file with override package/license info'
+    required: false
+  ignored-packages-file:
+    description: 'JSON file listing packages to ignore'
+    required: false
+  allowed-licenses-file:
+    description: 'JSON file listing allowed license types'
+    required: false
+  licenseurl-mappings-file:
+    description: 'JSON file mapping license URLs to license types'
+    required: false
 outputs:
   license_file:
     description: 'Path to the generated license file'
@@ -26,13 +46,26 @@ runs:
           echo 'Dotnet SDK not found. Please run actions/setup-dotnet earlier in the workflow.' >&2
           exit 1
         fi
+    - name: Restore project (ensure assets for license scan)
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROJECT='${{ inputs.project }}'
+        if [ ! -f "$PROJECT" ]; then echo "Project/Solution file not found: $PROJECT" >&2; exit 1; fi
+        # Perform a targeted restore only if no obj/project.assets.json exists yet
+        if ! grep -q 'project.assets.json' <(find . -path './**/obj/project.assets.json' 2>/dev/null); then
+          echo 'Performing dotnet restore...'
+          dotnet restore "$PROJECT" >/dev/null
+        else
+          echo 'Restore artifacts already present. Skipping restore.'
+        fi
     - name: Install nuget-license tool
       shell: bash
       run: |
         set -euo pipefail
         TOOL_PATH=".tools"
         mkdir -p "$TOOL_PATH"
-        VERSION="${{ inputs.nuget-license-version }}"
+        VERSION='${{ inputs.nuget-license-version }}'
         dotnet tool install --tool-path "$TOOL_PATH" nuget-license --version "$VERSION" \
           || dotnet tool update --tool-path "$TOOL_PATH" nuget-license --version "$VERSION"
     - name: Generate license file
@@ -43,16 +76,38 @@ runs:
         EXE=".tools/nuget-license"
         if [ ! -x "$EXE" ] && [ -f ".tools/nuget-license.exe" ]; then EXE=".tools/nuget-license.exe"; fi
         if [ ! -f "$EXE" ]; then echo 'nuget-license tool not found' >&2; exit 1; fi
-        PROJECT="${{ inputs.project }}"
-        OUT_FILE="${{ inputs.output-file }}"
+        PROJECT='${{ inputs.project }}'
+        OUT_FILE='${{ inputs.output-file }}'
+        IGNORE_ERRORS='${{ inputs.ignore-errors }}'
         echo "Starting license collection for $PROJECT -> $OUT_FILE"
+        CMD=("$EXE" -i "$PROJECT" -fo "$OUT_FILE" -o Markdown)
+        if [ '${{ inputs.include-transitive }}' = 'true' ]; then CMD+=( -t ); fi
+        [ -n '${{ inputs.override-package-info-file }}' ] && [ -f '${{ inputs.override-package-info-file }}' ] && CMD+=( -override '${{ inputs.override-package-info-file }}' )
+        [ -n '${{ inputs.ignored-packages-file }}' ] && [ -f '${{ inputs.ignored-packages-file }}' ] && CMD+=( -ignore '${{ inputs.ignored-packages-file }}' )
+        [ -n '${{ inputs.allowed-licenses-file }}' ] && [ -f '${{ inputs.allowed-licenses-file }}' ] && CMD+=( -a '${{ inputs.allowed-licenses-file }}' )
+        [ -n '${{ inputs.licenseurl-mappings-file }}' ] && [ -f '${{ inputs.licenseurl-mappings-file }}' ] && CMD+=( -mapping '${{ inputs.licenseurl-mappings-file }}' )
         set +e
-        "$EXE" -i "$PROJECT" -fo "$OUT_FILE" -o Markdown
+        "${CMD[@]}"
         EXIT_CODE=$?
         set -e
         if [ ! -f "$OUT_FILE" ]; then echo 'License file was not generated' >&2; exit 1; fi
+        # Sanitize: remove completely empty package rows (tool sometimes emits duplicates with missing data)
+        TMP_SANITIZE="$OUT_FILE.sanitized.tmp"
+        awk 'NR==1 || NR==2 || !($0 ~ /^\|[[:space:]]+\|[[:space:]]+\|/)' "$OUT_FILE" > "$TMP_SANITIZE" && mv "$TMP_SANITIZE" "$OUT_FILE"
+        if grep -q 'No license information found' "$OUT_FILE"; then
+          echo 'Detected packages without license information.' >&2
+          if [ "$IGNORE_ERRORS" != 'true' ]; then
+            echo 'Failing due to missing license information.' >&2
+            exit 2
+          fi
+        fi
         if [ $EXIT_CODE -ne 0 ]; then
-          echo "Warning: nuget-license exited with code $EXIT_CODE (possibly missing license info)." >&2
+          if [ "$IGNORE_ERRORS" = 'true' ]; then
+            echo "Warning: nuget-license exited with code $EXIT_CODE (continuing)." >&2
+          else
+            echo "nuget-license exited with code $EXIT_CODE (failing)." >&2
+            exit $EXIT_CODE
+          fi
         fi
         echo "license_file=$OUT_FILE" >> "$GITHUB_OUTPUT"
         echo "Licenses collected at $OUT_FILE"
