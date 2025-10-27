@@ -10,7 +10,7 @@ inputs:
     required: false
     default: 'licenses.md'
   nuget-license-version:
-    description: 'Version der nuget-license Tool-Installation'
+    description: 'Version of the nuget-license tool'
     required: false
     default: '4.0.0'
   ignore-errors:
