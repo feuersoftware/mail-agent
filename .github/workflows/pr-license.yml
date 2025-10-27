@@ -1,0 +1,95 @@
+name: PR Test & License
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-license:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: pr-nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            pr-nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore MailAgent.sln
+      - name: Build (Debug)
+        run: dotnet build MailAgent.sln -c Debug --no-restore
+      - name: Run tests
+        run: dotnet test MailAgent.Tests/MailAgent.Tests.csproj -c Debug --no-build --logger "trx;LogFileName=test-results.trx" --results-directory test-results
+      - name: Collect licenses
+        uses: ./.github/actions/collect-licenses
+        with:
+          project: MailAgent/MailAgent.csproj
+          output-file: licenses.md
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-artifacts
+          path: |
+            test-results
+            licenses.md
+name: 'Collect NuGet Licenses'
+description: 'Generiert eine Markdown-Datei mit Lizenzinformationen für verwendete NuGet-Packages.'
+author: 'internal'
+inputs:
+  project:
+    description: 'Pfad zur Projektdatei (csproj) oder Solution.'
+    required: true
+    default: 'MailAgent/MailAgent.csproj'
+  output-file:
+    description: 'Zieldatei für Lizenzliste.'
+    required: false
+    default: 'licenses.md'
+  nuget-license-version:
+    description: 'Version des nuget-license Tools.'
+    required: false
+    default: '4.0.0'
+outputs:
+  license_file:
+    description: 'Pfad zur erzeugten Lizenzdatei.'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install nuget-license tool
+      shell: bash
+      run: |
+        set -euo pipefail
+        TOOL_PATH=".tools"
+        mkdir -p "$TOOL_PATH"
+        dotnet tool install --tool-path "$TOOL_PATH" nuget-license --version "${{ inputs.nuget-license-version }}" || \
+          dotnet tool update --tool-path "$TOOL_PATH" nuget-license --version "${{ inputs.nuget-license-version }}"
+    - name: Generate license file
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROJECT="${{ inputs.project }}"
+        OUT_FILE="${{ inputs.output-file }}"
+        EXE=".tools/nuget-license"
+        if [ ! -f "$EXE" ] && [ -f ".tools/nuget-license.exe" ]; then EXE=".tools/nuget-license.exe"; fi
+        if [ ! -f "$EXE" ]; then echo "nuget-license Tool nicht gefunden" >&2; exit 1; fi
+        set +e
+        "$EXE" -i "$PROJECT" -fo "$OUT_FILE" -o Markdown
+        EXIT_CODE=$?
+        set -e
+        if [ ! -f "$OUT_FILE" ]; then echo "Lizenzdatei wurde nicht erzeugt" >&2; exit 1; fi
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "Warnung: nuget-license beendete sich mit Code $EXIT_CODE. Datei wird trotzdem verwendet." >&2
+        fi
+        echo "license_file=$OUT_FILE" >> "$GITHUB_OUTPUT"
+        echo "Licenses collected at $OUT_FILE"
+
