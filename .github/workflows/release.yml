@@ -65,6 +65,7 @@ jobs:
     needs: version
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -97,8 +98,10 @@ jobs:
           $rid='${{ matrix.rid }}'
           $workspace='${{ github.workspace }}'
           $outDir = Join-Path $workspace (Join-Path 'publish' $rid)
-          Write-Host "Publishing for $rid (ReleaseVersion=${{ needs.version.outputs.release_version }})"
-          dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true -o $outDir
+          $ver='${{ needs.version.outputs.release_version }}'
+          $commitShort = git rev-parse --short HEAD
+          Write-Host "Publishing for $rid (ReleaseVersion=$ver, Commit=$commitShort)"
+          dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true /p:Version=$ver /p:AssemblyVersion=$ver /p:FileVersion=$ver /p:InformationalVersion="$ver+$commitShort" -o $outDir
       - name: Collect licenses
         id: collect_licenses
         uses: ./.github/actions/collect-licenses
@@ -184,31 +187,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: downloaded_artifacts
-      - name: Generate changelog
-        id: changelog
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --tags --quiet
-          tag="v${{ needs.version.outputs.release_version }}"
-          currentCommit=$(git rev-parse "$tag" 2>/dev/null || git rev-parse HEAD)
-          prev=$(git tag --sort=-creatordate | grep -v "^$tag$" | head -n1 || true)
-          if [[ -z "$prev" ]]; then
-            notes="First release."
-          else
-            log=$(git log "$prev".."$currentCommit" --pretty=format:'* %h %s' | head -n200)
-            if [[ -z "$log" ]]; then
-              notes="No commit differences from $prev."
-            else
-              notes=$'Changes since '$prev':\n'
-              notes+="$log"
-            fi
-          fi
-          echo "$notes" | sed ':a;N;$!ba;s/\r//g' > changelog.txt
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          cat changelog.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      - name: Create release
+      - name: Create release (auto-generated notes)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -216,15 +195,16 @@ jobs:
           set -euo pipefail
           ver='${{ needs.version.outputs.release_version }}'
           tag="v$ver"
-          body="${{ steps.changelog.outputs.changelog }}"
           files=( $(find downloaded_artifacts -type f -name '*.zip') )
           if [ ${#files[@]} -eq 0 ]; then echo "No ZIP files to upload" >&2; exit 1; fi
           checksums=$(find downloaded_artifacts -type f -name 'checksums.sha256.txt' -maxdepth 2 || true)
           echo "Assets: ${#files[@]} ZIP(s)"; [ -n "$checksums" ] && echo "Checksums file: $checksums"
           if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Release exists: uploading/refreshing assets (notes unchanged)'
             gh release upload "$tag" "${files[@]}" $checksums --clobber
           else
-            gh release create "$tag" "${files[@]}" $checksums --title "mail-agent v$ver" --notes "$body"
+            echo 'Creating new release with auto-generated notes'
+            gh release create "$tag" "${files[@]}" $checksums --title "mail-agent v$ver" --generate-notes
           fi
       - name: Upload final artifacts bundle
         uses: actions/upload-artifact@v4

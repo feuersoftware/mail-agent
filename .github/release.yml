@@ -1,0 +1,38 @@
+# GitHub Release Notes configuration
+# Siehe Doku: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  exclude:
+    labels:
+      - ignore-release
+      - dependencies
+    authors:
+      - dependabot
+  categories:
+    - title: 🚀 Features
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Bugfixes
+      labels:
+        - bug
+        - fix
+        - regression
+    - title: 🧪 Tests
+      labels:
+        - test
+    - title: 📚 Docs & Content
+      labels:
+        - docs
+        - documentation
+    - title: 🧹 Maintenance & Chore
+      labels:
+        - chore
+        - refactor
+        - cleanup
+    - title: 🔒 Security
+      labels:
+        - security
+    - title: Other Changes
+      labels:
+        - '*'
+
