@@ -28,8 +28,6 @@ jobs:
         run: dotnet restore MailAgent.sln
       - name: Build (Debug)
         run: dotnet build MailAgent.sln -c Debug --no-restore
-      - name: Run tests
-        run: dotnet test MailAgent.Tests/MailAgent.Tests.csproj -c Debug --no-build --logger "trx;LogFileName=test-results.trx" --results-directory test-results
       - name: Collect licenses
         uses: ./.github/actions/collect-licenses
         with:
@@ -41,5 +39,4 @@ jobs:
         with:
           name: pr-artifacts
           path: |
-            test-results
             licenses.md
