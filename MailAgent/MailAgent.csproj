@@ -16,7 +16,8 @@
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <Version>2.2.3</Version>
     <UserSecretsId>8eae55bd-49a1-4a01-953b-c7fe16dd357b</UserSecretsId>
-    <PlatformTarget>x86</PlatformTarget>
+    <Platforms>AnyCPU;x86;x64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <LangVersion>latestmajor</LangVersion>
     <AssemblyVersion>3.0.0</AssemblyVersion>
     <FileVersion>3.0.0</FileVersion>
@@ -80,6 +81,7 @@
     </None>
     <None Remove="Properties\PublishProfiles\FolderProfile.pubxml" />
     <None Remove="obj\**" />
+    <None Remove="publish_multi\**" />
   </ItemGroup>
 
   <ItemGroup>
