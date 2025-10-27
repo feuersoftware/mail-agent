@@ -1,0 +1,58 @@
+name: 'Collect NuGet Licenses'
+description: 'Generates a Markdown file containing license information for used NuGet packages.'
+author: 'maintainers'
+inputs:
+  project:
+    description: 'Path to the project file (.csproj) or solution (.sln)'
+    required: true
+  output-file:
+    description: 'Output file for the license list'
+    required: false
+    default: 'licenses.md'
+  nuget-license-version:
+    description: 'Version of the nuget-license tool'
+    required: false
+    default: '4.0.0'
+outputs:
+  license_file:
+    description: 'Path to the generated license file'
+runs:
+  using: 'composite'
+  steps:
+    - name: Ensure .NET SDK is available
+      shell: bash
+      run: |
+        if ! command -v dotnet >/dev/null 2>&1; then
+          echo 'Dotnet SDK not found. Please run actions/setup-dotnet earlier in the workflow.' >&2
+          exit 1
+        fi
+    - name: Install nuget-license tool
+      shell: bash
+      run: |
+        set -euo pipefail
+        TOOL_PATH=".tools"
+        mkdir -p "$TOOL_PATH"
+        VERSION="${{ inputs.nuget-license-version }}"
+        dotnet tool install --tool-path "$TOOL_PATH" nuget-license --version "$VERSION" \
+          || dotnet tool update --tool-path "$TOOL_PATH" nuget-license --version "$VERSION"
+    - name: Generate license file
+      id: gen
+      shell: bash
+      run: |
+        set -euo pipefail
+        EXE=".tools/nuget-license"
+        if [ ! -x "$EXE" ] && [ -f ".tools/nuget-license.exe" ]; then EXE=".tools/nuget-license.exe"; fi
+        if [ ! -f "$EXE" ]; then echo 'nuget-license tool not found' >&2; exit 1; fi
+        PROJECT="${{ inputs.project }}"
+        OUT_FILE="${{ inputs.output-file }}"
+        echo "Starting license collection for $PROJECT -> $OUT_FILE"
+        set +e
+        "$EXE" -i "$PROJECT" -fo "$OUT_FILE" -o Markdown
+        EXIT_CODE=$?
+        set -e
+        if [ ! -f "$OUT_FILE" ]; then echo 'License file was not generated' >&2; exit 1; fi
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "Warning: nuget-license exited with code $EXIT_CODE (possibly missing license info)." >&2
+        fi
+        echo "license_file=$OUT_FILE" >> "$GITHUB_OUTPUT"
+        echo "Licenses collected at $OUT_FILE"

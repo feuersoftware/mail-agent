@@ -27,37 +27,37 @@ jobs:
           set -euo pipefail
           git fetch origin main --quiet
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag-Commit ist nicht Teil von main. Abbruch." >&2
+            echo "Tag commit is not part of main. Aborting." >&2
             exit 1
           fi
-          echo "Tag-Commit liegt auf main."
+            echo "Tag commit is on main."
       - name: Validate tag and set version
         id: set_version
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
-            echo "Error: Workflow muss durch einen Tag 'v*' gestartet werden." >&2
+            echo "Error: Workflow must be triggered by a tag 'v*'." >&2
             exit 1
           fi
           ver="${GITHUB_REF#refs/tags/v}"
-          echo "Release-Version: $ver"
+          echo "Release version: $ver"
           echo "release_version=$ver" >> "$GITHUB_OUTPUT"
-      - name: Show previous tag diff (informativ)
+      - name: Show previous tag diff (informational)
         shell: bash
         run: |
           git fetch --tags --quiet
           current="${GITHUB_REF#refs/tags/}"
-          prev=$(git tag --sort=-creatordate | grep -v "^${current}$" | head -n1 || true)
+            prev=$(git tag --sort=-creatordate | grep -v "^${current}$" | head -n1 || true)
           if [[ -z "$prev" ]]; then
-            echo "Erster Release-Tag (kein vorheriger Tag gefunden)."
+            echo "First release tag (no previous tag found)."
             exit 0
           fi
           diffCount=$(git diff --name-only "$prev" "$current" | wc -l | tr -d ' ')
           if [[ "$diffCount" == "0" ]]; then
-            echo "Warnung: Keine Änderungen zwischen $prev und $current." >&2
+            echo "Warning: No changes between $prev and $current." >&2
           else
-            echo "Geänderte Dateien seit $prev: $diffCount"
+            echo "Changed files since $prev: $diffCount"
           fi
 
   build_and_package:
@@ -94,25 +94,11 @@ jobs:
           Write-Host "Publishing for $rid (ReleaseVersion=${{ needs.version.outputs.release_version }})"
           dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true -o $outDir
       - name: Collect licenses
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $workspace='${{ github.workspace }}'
-          $toolPath = Join-Path $workspace '.tools'
-          if (-Not (Test-Path $toolPath)) { New-Item -ItemType Directory -Path $toolPath | Out-Null }
-          dotnet tool install --tool-path $toolPath nuget-license --version 4.0.0 || dotnet tool update --tool-path $toolPath nuget-license --version 4.0.0
-          $exe = Join-Path $toolPath 'nuget-license.exe'
-          if (-Not (Test-Path $exe)) { $exe = Join-Path $toolPath 'nuget-license' }
-          if (-Not (Test-Path $exe)) { Write-Error "nuget-license not found at $toolPath"; exit 1 }
-          $outFile = Join-Path $toolPath 'licenses.md'
-          & $exe -i MailAgent/MailAgent.csproj -fo $outFile -o Markdown
-          $toolExit = $LASTEXITCODE
-          if (-Not (Test-Path $outFile)) { Write-Error "License file not generated"; exit 1 }
-          if ($toolExit -ne 0) {
-            Write-Warning "nuget-license exited with code $toolExit (vermutlich fehlende oder unbekannte Lizenzinformationen). Ignoriere und fahre fort."
-            $global:LASTEXITCODE = 0
-          }
-          Write-Host "Licenses collected at $outFile"
+        id: collect_licenses
+        uses: ./.github/actions/collect-licenses
+        with:
+          project: MailAgent/MailAgent.csproj
+          output-file: licenses.md
       - name: Prepare artifact folder
         shell: pwsh
         run: |
@@ -129,8 +115,9 @@ jobs:
           Copy-Item -Path (Join-Path $publishDir '*') -Destination $artifactDir -Recurse -Force
           $extras = @('MailAgent/readme.md','MailAgent/install.bat','MailAgent/uninstall.bat')
           foreach ($e in $extras) { $full = Join-Path $workspace $e; if (Test-Path $full) { Copy-Item -Path $full -Destination $artifactDir -Force } }
-          $toolLic = Join-Path $workspace '.tools/licenses.md'
-          if (Test-Path $toolLic) { Copy-Item -Path $toolLic -Destination (Join-Path $artifactDir 'licenses.md') -Force }
+          # Copy collected license file (composite action output)
+          $licenseFile = Join-Path $workspace 'licenses.md'
+          if (Test-Path $licenseFile) { Copy-Item -Path $licenseFile -Destination (Join-Path $artifactDir 'licenses.md') -Force }
       - name: Create ZIP package
         shell: pwsh
         run: |
