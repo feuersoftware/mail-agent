@@ -209,7 +209,7 @@ jobs:
           set -euo pipefail
           ver='${{ needs.version.outputs.release_version }}'
           tag="v$ver"
-          body="Release built from tag $tag%0A%0A${{ steps.changelog.outputs.changelog }}"
+          body="{{ steps.changelog.outputs.changelog }}"
           files=( $(find downloaded_artifacts -type f -name '*.zip') )
           if [ ${#files[@]} -eq 0 ]; then echo "No ZIP files to upload" >&2; exit 1; fi
           checksums=$(find downloaded_artifacts -type f -name 'checksums.sha256.txt' -maxdepth 2 || true)
