@@ -197,10 +197,17 @@ jobs:
             notes="First release."
           else
             log=$(git log "$prev".."$currentCommit" --pretty=format:'* %h %s' | head -n200)
-            if [[ -z "$log" ]]; then notes="No commit differences from $prev."; else notes="Changes since $prev:\n$log"; fi
+            if [[ -z "$log" ]]; then
+              notes="No commit differences from $prev."
+            else
+              notes=$'Changes since '$prev':\n'
+              notes+="$log"
+            fi
           fi
-          safe=$(echo "$notes" | sed ':a;N;$!ba;s/\r//g' | sed 's/$/%0A/'); safe=${safe%%%0A}
-          echo "changelog=$safe" >> $GITHUB_OUTPUT
+          echo "$notes" | sed ':a;N;$!ba;s/\r//g' > changelog.txt
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat changelog.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
