@@ -94,6 +94,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="4.7.2" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="4.7.1" />
     <EmbeddedResource Remove="obj\**" />
   </ItemGroup>
