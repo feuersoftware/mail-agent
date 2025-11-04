@@ -23,6 +23,11 @@
     <FileVersion>3.0.0</FileVersion>
   </PropertyGroup>
 
+  <!-- Fallback ClientId falls kein /p:O365ClientId übergeben wird -->
+  <PropertyGroup>
+    <O365ClientId Condition="'$(O365ClientId)' == ''">00000000-0000-0000-0000-000000000000</O365ClientId>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <NoWarn>1701;1702, CA2254, CA1816</NoWarn>
   </PropertyGroup>
@@ -93,6 +98,11 @@
 
   <ItemGroup>
     <Compile Remove="obj\**" />
+  </ItemGroup>
+
+  <!-- Entfernt GenerateBuildSecrets Target und nutzt AssemblyMetadata stattdessen -->
+  <ItemGroup>
+    <AssemblyMetadata Include="FallbackClientId" Value="$(O365ClientId)" />
   </ItemGroup>
 
   <ItemGroup>

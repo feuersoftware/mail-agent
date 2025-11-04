@@ -94,6 +94,8 @@ jobs:
         run: dotnet restore MailAgent/MailAgent.csproj
       - name: Publish single-file executable
         shell: pwsh
+        env:
+          O365_CLIENT_ID: ${{ secrets.O365_CLIENT_ID }}
         run: |
           $rid='${{ matrix.rid }}'
           $workspace='${{ github.workspace }}'
@@ -101,7 +103,7 @@ jobs:
           $ver='${{ needs.version.outputs.release_version }}'
           $commitShort = git rev-parse --short HEAD
           Write-Host "Publishing for $rid (ReleaseVersion=$ver, Commit=$commitShort)"
-          dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true /p:Version=$ver /p:AssemblyVersion=$ver /p:FileVersion=$ver /p:InformationalVersion="$ver+$commitShort" -o $outDir
+          dotnet publish MailAgent/MailAgent.csproj -c Release -r $rid /p:PublishSingleFile=true /p:PublishTrimmed=false /p:SelfContained=true /p:Version=$ver /p:AssemblyVersion=$ver /p:FileVersion=$ver /p:InformationalVersion="$ver+$commitShort" /p:O365ClientId=$env:O365_CLIENT_ID -o $outDir
       - name: Collect licenses
         id: collect_licenses
         uses: ./.github/actions/collect-licenses
