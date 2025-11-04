@@ -51,7 +51,10 @@ namespace FeuerSoftware.MailAgent
                         .AddSingleton<IMailService, MailService>()
                         .AddSingleton<IPGPService, PGPService>()
                         .AddSingleton<IConnectEvaluationService, ConnectEvaluationService>()
-                        .AddSingleton<IConnectApiClient, ConnectApiClient>();
+                        .AddSingleton<IConnectApiClient, ConnectApiClient>()
+                        .AddSingleton<IMailClientFactory, MailClientFactory>()
+                        .AddSingleton<ITokenStorageService, TokenStorageService>()
+                        .AddSingleton<IAuthenticationService, O365AuthenticationService>();
 
                     services
                        .AddHttpClient<HeartbeatService>(c =>
@@ -91,18 +94,6 @@ namespace FeuerSoftware.MailAgent
                             throw new ArgumentOutOfRangeException(nameof(MailAgentOptions.ProcessMode), "ProcessMode not specified in settings.");
                     }
 
-                    switch (options.EMailMode)
-                    {
-                        case EMailMode.Imap:
-                            services.AddTransient<IMailClient, ImapClient>();
-                            break;
-                        case EMailMode.Exchange:
-                            services.AddTransient<IMailClient, ExchangeClient>();
-                            break;
-                        default:
-                            throw new ArgumentOutOfRangeException(nameof(MailAgentOptions.ProcessMode), "EMailMode not specified in settings.");
-                    }
-
                     if (options.IgnoreCertificateErrors)
                     {
 #pragma warning disable SYSLIB0014
@@ -112,7 +103,36 @@ namespace FeuerSoftware.MailAgent
                     }
                 });
 
-            await hostBuilder.Build().RunAsync().ConfigureAwait(false);
+            var host = hostBuilder.Build();
+
+            // Initialize O365 authentication for configured mailboxes
+            var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<MailAgentOptions>>().Value;
+            var o365Users = options.EmailSettings
+                .Where(s => s.AuthenticationType == Options.AuthenticationType.O365)
+                .Select(s => s.EMailUsername)
+                .ToList();
+
+            if (o365Users.Any())
+            {
+                var authService = host.Services.GetRequiredService<IAuthenticationService>();
+                var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+                var logger = loggerFactory.CreateLogger("O365Authentication");
+                
+                logger.LogInformation("Initializing O365 authentication for configured mailboxes...");
+                
+                try
+                {
+                    await authService.InitializeAuthenticationAsync(o365Users, CancellationToken.None).ConfigureAwait(false);
+                    logger.LogInformation("O365 authentication initialization completed successfully.");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to initialize O365 authentication. The application will exit.");
+                    return;
+                }
+            }
+
+            await host.RunAsync().ConfigureAwait(false);
         }
 
         private static void PrintLogo()
