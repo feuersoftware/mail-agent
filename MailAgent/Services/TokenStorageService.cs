@@ -42,13 +42,32 @@ namespace FeuerSoftware.MailAgent.Services
                 }
                 else
                 {
-                    // For non-Windows, we'll use a simple encoding (not truly encrypted)
-                    // In production, consider using a proper cross-platform encryption library
-                    _log.LogWarning("Running on non-Windows platform. Token storage is not fully encrypted.");
+                    // For non-Windows, we'll store tokens with file system permissions only
+                    // NOTE: This is not as secure as Windows Data Protection API
+                    // For production on Linux, consider:
+                    // 1. Using system keyring (e.g., gnome-keyring, kwallet)
+                    // 2. Implementing encryption with a key derivation function
+                    // 3. Using container secrets or vault solutions
+                    _log.LogWarning("Running on non-Windows platform. Tokens are stored with file system permissions only. Ensure proper file permissions are set.");
                     encryptedToken = tokenBytes;
                 }
                 
                 await File.WriteAllBytesAsync(filePath, encryptedToken);
+                
+                // On Unix-like systems, set restrictive file permissions (user read/write only)
+                if (!OperatingSystem.IsWindows())
+                {
+                    try
+                    {
+                        // chmod 600 (user read/write only)
+                        File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+                    catch (Exception permEx)
+                    {
+                        _log.LogWarning(permEx, "Failed to set restrictive file permissions on token file");
+                    }
+                }
+                
                 _log.LogInformation($"Token saved for user {username}");
             }
             catch (Exception ex)
@@ -91,7 +110,7 @@ namespace FeuerSoftware.MailAgent.Services
             }
         }
 
-        public async Task DeleteTokenAsync(string username)
+        public Task DeleteTokenAsync(string username)
         {
             try
             {
@@ -99,7 +118,7 @@ namespace FeuerSoftware.MailAgent.Services
                 
                 if (File.Exists(filePath))
                 {
-                    await Task.Run(() => File.Delete(filePath));
+                    File.Delete(filePath);
                     _log.LogInformation($"Token deleted for user {username}");
                 }
             }
@@ -107,6 +126,8 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 _log.LogError(ex, $"Failed to delete token for user {username}");
             }
+            
+            return Task.CompletedTask;
         }
 
         private string GetTokenFilePath(string username)

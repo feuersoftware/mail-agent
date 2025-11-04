@@ -43,7 +43,7 @@ namespace FeuerSoftware.MailAgent.Services
                     return new ExchangeClient(exchangeLogger);
 
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(settings.AuthenticationType), 
+                    throw new ArgumentOutOfRangeException(nameof(_options.EMailMode), 
                         $"Unsupported EMailMode: {_options.EMailMode}");
             }
         }

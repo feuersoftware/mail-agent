@@ -16,14 +16,16 @@ namespace FeuerSoftware.MailAgent.Services
 
         public O365AuthenticationService(
             [NotNull] ILogger<O365AuthenticationService> log,
-            [NotNull] ITokenStorageService tokenStorage)
+            [NotNull] ITokenStorageService tokenStorage,
+            [NotNull] Microsoft.Extensions.Options.IOptions<FeuerSoftware.MailAgent.Options.MailAgentOptions> options)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
             _tokenStorage = tokenStorage ?? throw new ArgumentNullException(nameof(tokenStorage));
+            var mailAgentOptions = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
             // Create the MSAL public client application
             _publicClientApp = PublicClientApplicationBuilder
-                .Create("08c9c2c0-8c3f-4c1e-a9c9-3e3e3e3e3e3e") // Public client ID for OAuth2
+                .Create(mailAgentOptions.O365ClientId)
                 .WithAuthority(AzureCloudInstance.AzurePublic, "common")
                 .WithRedirectUri("http://localhost")
                 .Build();
