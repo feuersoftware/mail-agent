@@ -50,13 +50,13 @@ namespace FeuerSoftware.MailAgent.Services
                             .AcquireTokenSilent(_scopes, account)
                             .ExecuteAsync();
                         
-                        _log.LogDebug($"Acquired token silently for {username}");
+                        _log.LogDebug($"Acquired token silently for {MaskUsername(username)}");
                         await _tokenStorage.SaveTokenAsync(username, result.AccessToken);
                         return result.AccessToken;
                     }
                     catch (MsalUiRequiredException)
                     {
-                        _log.LogInformation($"UI interaction required for {username}. Attempting interactive authentication.");
+                        _log.LogInformation($"UI interaction required for {MaskUsername(username)}. Attempting interactive authentication.");
                     }
                 }
 
@@ -68,12 +68,12 @@ namespace FeuerSoftware.MailAgent.Services
                     .ExecuteAsync();
 
                 await _tokenStorage.SaveTokenAsync(username, interactiveResult.AccessToken);
-                _log.LogInformation($"Acquired token interactively for {username}");
+                _log.LogInformation($"Acquired token interactively for {MaskUsername(username)}");
                 return interactiveResult.AccessToken;
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, $"Failed to acquire access token for {username}");
+                _log.LogError(ex, $"Failed to acquire access token for {MaskUsername(username)}");
                 throw;
             }
         }
@@ -91,12 +91,12 @@ namespace FeuerSoftware.MailAgent.Services
 
                 try
                 {
-                    _log.LogInformation($"Authenticating user: {username}");
+                    _log.LogInformation($"Authenticating user: {MaskUsername(username)}");
                     await GetAccessTokenAsync(username);
                 }
                 catch (Exception ex)
                 {
-                    _log.LogError(ex, $"Failed to initialize authentication for {username}");
+                    _log.LogError(ex, $"Failed to initialize authentication for {MaskUsername(username)}");
                     throw;
                 }
             }
@@ -109,6 +109,23 @@ namespace FeuerSoftware.MailAgent.Services
             // This helps persist tokens across application restarts
             // MSAL will handle caching internally
             _log.LogDebug("Token cache configured");
+        }
+
+        private static string MaskUsername(string username)
+        {
+            // Mask the username for logging to avoid exposing full email addresses
+            if (string.IsNullOrEmpty(username) || username.Length < 5)
+            {
+                return "***";
+            }
+
+            var atIndex = username.IndexOf('@');
+            if (atIndex <= 0)
+            {
+                return username.Substring(0, 3) + "***";
+            }
+
+            return username.Substring(0, Math.Min(3, atIndex)) + "***@" + username.Substring(atIndex + 1);
         }
     }
 }

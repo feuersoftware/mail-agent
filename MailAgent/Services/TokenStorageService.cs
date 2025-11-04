@@ -68,11 +68,11 @@ namespace FeuerSoftware.MailAgent.Services
                     }
                 }
                 
-                _log.LogInformation($"Token saved for user {username}");
+                _log.LogInformation($"Token saved for user {MaskUsername(username)}");
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, $"Failed to save token for user {username}");
+                _log.LogError(ex, $"Failed to save token for user {MaskUsername(username)}");
                 throw;
             }
         }
@@ -85,7 +85,7 @@ namespace FeuerSoftware.MailAgent.Services
                 
                 if (!File.Exists(filePath))
                 {
-                    _log.LogDebug($"No token found for user {username}");
+                    _log.LogDebug($"No token found for user {MaskUsername(username)}");
                     return null;
                 }
 
@@ -105,7 +105,7 @@ namespace FeuerSoftware.MailAgent.Services
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, $"Failed to retrieve token for user {username}");
+                _log.LogError(ex, $"Failed to retrieve token for user {MaskUsername(username)}");
                 return null;
             }
         }
@@ -119,12 +119,12 @@ namespace FeuerSoftware.MailAgent.Services
                 if (File.Exists(filePath))
                 {
                     File.Delete(filePath);
-                    _log.LogInformation($"Token deleted for user {username}");
+                    _log.LogInformation($"Token deleted for user {MaskUsername(username)}");
                 }
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, $"Failed to delete token for user {username}");
+                _log.LogError(ex, $"Failed to delete token for user {MaskUsername(username)}");
             }
             
             return Task.CompletedTask;
@@ -137,6 +137,23 @@ namespace FeuerSoftware.MailAgent.Services
                 .Replace("/", "_")
                 .Replace("+", "-");
             return Path.Combine(_tokenDirectory, $"{safeUsername}.token");
+        }
+
+        private static string MaskUsername(string username)
+        {
+            // Mask the username for logging to avoid exposing full email addresses
+            if (string.IsNullOrEmpty(username) || username.Length < 5)
+            {
+                return "***";
+            }
+
+            var atIndex = username.IndexOf('@');
+            if (atIndex <= 0)
+            {
+                return username.Substring(0, 3) + "***";
+            }
+
+            return username.Substring(0, Math.Min(3, atIndex)) + "***@" + username.Substring(atIndex + 1);
         }
     }
 }
