@@ -14,8 +14,11 @@ internal static class BuildSecrets
                 .FirstOrDefault(a => a.Key == "FallbackClientId");
             _fallbackClientId = metadata?.Value;
         }
-        catch
+        catch (Exception ex) when (ex is System.IO.FileNotFoundException || 
+                                     ex is System.Reflection.ReflectionTypeLoadException ||
+                                     ex is System.TypeLoadException)
         {
+            System.Diagnostics.Debug.WriteLine($"Error reading FallbackClientId from assembly metadata: {ex.Message}");
             _fallbackClientId = null;
         }
     }

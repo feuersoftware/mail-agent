@@ -33,9 +33,6 @@ namespace FeuerSoftware.MailAgent.Services
                 .WithAuthority(AzureCloudInstance.AzurePublic, "common")
                 .WithRedirectUri("http://localhost")
                 .Build();
-
-            // Configure token cache serialization
-            ConfigureTokenCache();
         }
 
         public async Task<string> GetAccessTokenAsync(string username)
@@ -106,13 +103,6 @@ namespace FeuerSoftware.MailAgent.Services
             }
 
             _log.LogInformation("O365 authentication initialization completed.");
-        }
-
-        private void ConfigureTokenCache()
-        {
-            // This helps persist tokens across application restarts
-            // MSAL will handle caching internally
-            _log.LogDebug("Token cache configured");
         }
 
         private static string MaskUsername(string username)

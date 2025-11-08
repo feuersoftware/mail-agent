@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+
 namespace FeuerSoftware.MailAgent.Services
 {
     public class TokenStorageService : ITokenStorageService
@@ -76,9 +77,19 @@ namespace FeuerSoftware.MailAgent.Services
                 
                 _log.LogInformation($"Token saved for user {MaskUsername(username)}");
             }
-            catch (Exception ex)
+            catch (CryptographicException ex)
             {
-                _log.LogError(ex, $"Failed to save token for user {MaskUsername(username)}");
+                _log.LogError(ex, $"Failed to encrypt token for user {MaskUsername(username)}");
+                throw;
+            }
+            catch (IOException ex)
+            {
+                _log.LogError(ex, $"Failed to save token file for user {MaskUsername(username)}");
+                throw;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _log.LogError(ex, $"Access denied when saving token for user {MaskUsername(username)}");
                 throw;
             }
         }
@@ -104,9 +115,19 @@ namespace FeuerSoftware.MailAgent.Services
                 
                 return Encoding.UTF8.GetString(tokenBytes);
             }
-            catch (Exception ex)
+            catch (CryptographicException ex)
             {
-                _log.LogError(ex, $"Failed to retrieve token for user {MaskUsername(username)}");
+                _log.LogError(ex, $"Failed to decrypt token for user {MaskUsername(username)}");
+                return null;
+            }
+            catch (IOException ex)
+            {
+                _log.LogError(ex, $"Failed to read token file for user {MaskUsername(username)}");
+                return null;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _log.LogError(ex, $"Access denied when reading token for user {MaskUsername(username)}");
                 return null;
             }
         }
@@ -123,9 +144,13 @@ namespace FeuerSoftware.MailAgent.Services
                     _log.LogInformation($"Token deleted for user {MaskUsername(username)}");
                 }
             }
-            catch (Exception ex)
+            catch (IOException ex)
             {
-                _log.LogError(ex, $"Failed to delete token for user {MaskUsername(username)}");
+                _log.LogError(ex, $"Failed to delete token file for user {MaskUsername(username)}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _log.LogError(ex, $"Access denied when deleting token for user {MaskUsername(username)}");
             }
             
             return Task.CompletedTask;

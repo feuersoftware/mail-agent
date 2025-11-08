@@ -148,9 +148,9 @@ namespace FeuerSoftware.MailAgent.Services
                 await _authService.GetAccessTokenAsync(username);
                 return true;
             }
-            catch (Exception ex)
+            catch (Microsoft.Identity.Client.MsalException ex)
             {
-                _log.LogError(ex, $"Authentication failed for {mailbox.EMailUsername}");
+                _log.LogError(ex, $"MSAL authentication failed for {mailbox.EMailUsername}");
                 
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"\n✗ Authentication failed: {ex.Message}");
@@ -166,6 +166,16 @@ namespace FeuerSoftware.MailAgent.Services
                 Console.WriteLine("  • Account doesn't have permission to access email via IMAP");
                 Console.WriteLine("  • Azure AD application permissions not properly configured");
                 Console.WriteLine();
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, $"Unexpected error during authentication for {mailbox.EMailUsername}");
+                
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n✗ Authentication failed: {ex.Message}");
+                Console.ResetColor();
 
                 return false;
             }
