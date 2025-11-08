@@ -136,7 +136,8 @@ namespace FeuerSoftware.MailAgent.Services
             // Create a safe filename from the username
             var safeUsername = Convert.ToBase64String(Encoding.UTF8.GetBytes(username))
                 .Replace("/", "_")
-                .Replace("+", "-");
+                .Replace("+", "-")
+                .Replace("=", "");
             return Path.Combine(_tokenDirectory, $"{safeUsername}.token");
         }
 
