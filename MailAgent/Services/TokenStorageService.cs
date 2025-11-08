@@ -62,9 +62,17 @@ namespace FeuerSoftware.MailAgent.Services
                         // chmod 600 (user read/write only)
                         File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
                     }
-                    catch (Exception permEx)
+                    catch (UnauthorizedAccessException permEx)
                     {
-                        _log.LogWarning(permEx, "Failed to set restrictive file permissions on token file");
+                        _log.LogWarning(permEx, "Failed to set restrictive file permissions on token file (unauthorized access)");
+                    }
+                    catch (IOException permEx)
+                    {
+                        _log.LogWarning(permEx, "Failed to set restrictive file permissions on token file (I/O error)");
+                    }
+                    catch (PlatformNotSupportedException permEx)
+                    {
+                        _log.LogWarning(permEx, "Failed to set restrictive file permissions on token file (platform not supported)");
                     }
                 }
                 
