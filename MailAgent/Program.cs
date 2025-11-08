@@ -54,7 +54,9 @@ namespace FeuerSoftware.MailAgent
                         .AddSingleton<IConnectApiClient, ConnectApiClient>()
                         .AddSingleton<IMailClientFactory, MailClientFactory>()
                         .AddSingleton<ITokenStorageService, TokenStorageService>()
-                        .AddSingleton<IAuthenticationService, O365AuthenticationService>();
+                        .AddSingleton<IAuthenticationService, O365AuthenticationService>()
+                        .AddSingleton<ConfigurationValidator>()
+                        .AddSingleton<O365AuthenticationGuide>();
 
                     services
                        .AddHttpClient<HeartbeatService>(c =>
@@ -105,32 +107,54 @@ namespace FeuerSoftware.MailAgent
 
             var host = hostBuilder.Build();
 
-            // Initialize O365 authentication for configured mailboxes
+            // Display configuration summary and validate settings
+            var configValidator = host.Services.GetRequiredService<ConfigurationValidator>();
             var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<MailAgentOptions>>().Value;
-            var o365Users = options.EmailSettings
+            
+            configValidator.PrintConfigurationSummary();
+            
+            var issues = configValidator.ValidateConfiguration();
+            configValidator.PrintValidationResults(issues);
+
+            // Stop if there are critical configuration errors
+            var hasErrors = issues.Any(i => i.Severity == IssueSeverity.Error);
+            if (hasErrors)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("✗ Cannot start application due to configuration errors.");
+                Console.WriteLine("  Please fix the errors above and restart the application.");
+                Console.ResetColor();
+                Console.WriteLine();
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+                return;
+            }
+
+            // Handle O365 authentication if needed
+            var o365Mailboxes = options.EmailSettings
                 .Where(s => s.AuthenticationType == Options.AuthenticationType.O365)
-                .Select(s => s.EMailUsername)
                 .ToList();
 
-            if (o365Users.Any())
+            if (o365Mailboxes.Any())
             {
-                var authService = host.Services.GetRequiredService<IAuthenticationService>();
-                var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-                var logger = loggerFactory.CreateLogger("O365Authentication");
+                var authGuide = host.Services.GetRequiredService<O365AuthenticationGuide>();
+                var success = await authGuide.GuideUserThroughAuthenticationAsync(o365Mailboxes, CancellationToken.None).ConfigureAwait(false);
                 
-                logger.LogInformation("Initializing O365 authentication for configured mailboxes...");
-                
-                try
+                if (!success)
                 {
-                    await authService.InitializeAuthenticationAsync(o365Users, CancellationToken.None).ConfigureAwait(false);
-                    logger.LogInformation("O365 authentication initialization completed successfully.");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to initialize O365 authentication. The application will exit.");
+                    Console.WriteLine("Press any key to exit...");
+                    Console.ReadKey();
                     return;
                 }
             }
+
+            // Start the application
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
+            Console.WriteLine("  ✓ Starting MailAgent...");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
+            Console.ResetColor();
+            Console.WriteLine();
 
             await host.RunAsync().ConfigureAwait(false);
         }

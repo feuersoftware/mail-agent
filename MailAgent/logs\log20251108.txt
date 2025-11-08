@@ -1,0 +1,68 @@
+2025-11-08 19:58:21.562 +00:00 [DBG] Token cache configured
+2025-11-08 19:58:21.714 +00:00 [ERR] Failed to acquire access token for use***@company.com
+System.Net.Http.HttpRequestException: Name or service not known (login.microsoftonline.com:443)
+ ---> System.Net.Sockets.SocketException (0xFFFDFFFF): Name or service not known
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.Sockets.Socket.<ConnectAsync>g__WaitForConnectWithCancellation|285_0(AwaitableSocketAsyncEventArgs saea, ValueTask connectTask, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   --- End of inner exception stack trace ---
+   at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.AuthenticationHelper.SendWithAuthAsync(HttpRequestMessage request, Uri authUri, Boolean async, ICredentials credentials, Boolean preAuthenticate, Boolean isProxyAuth, Boolean doRequestAuth, HttpConnectionPool pool, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at Microsoft.Identity.Client.Http.HttpManager.ExecuteAsync(Uri endpoint, IDictionary`2 headers, HttpContent body, HttpMethod method, X509Certificate2 bindingCertificate, Func`5 validateServerCert, ILoggerAdapter logger, CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.Http.HttpManager.SendRequestAsync(Uri endpoint, IDictionary`2 headers, HttpContent body, HttpMethod method, ILoggerAdapter logger, Boolean doNotThrow, X509Certificate2 bindingCertificate, Func`5 validateServerCert, CancellationToken cancellationToken, IRetryPolicy retryPolicy, Int32 retryCount)
+   at Microsoft.Identity.Client.OAuth2.OAuth2Client.ExecuteRequestAsync[T](Uri endPoint, HttpMethod method, RequestContext requestContext, Boolean expectErrorsOn200OK, Boolean addCommonHeaders, IList`1 onBeforePostRequestHandlers)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.SendInstanceDiscoveryRequestAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.FetchAllDiscoveryMetadataAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.GetMetadataAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.InstanceDiscoveryManager.FetchNetworkMetadataOrFallbackAsync(RequestContext requestContext, Uri authorityUri)
+   at Microsoft.Identity.Client.Instance.Discovery.InstanceDiscoveryManager.GetMetadataEntryAsync(AuthorityInfo authorityInfo, RequestContext requestContext, Boolean forceValidation)
+   at Microsoft.Identity.Client.Instance.AuthorityManager.RunInstanceDiscoveryAndValidationAsync()
+   at Microsoft.Identity.Client.Internal.Requests.InteractiveRequest.ExecuteAsync(CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.Internal.Requests.RequestBase.<>c__DisplayClass11_1.<<RunAsync>b__1>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.Identity.Client.Utils.StopwatchService.MeasureCodeBlockAsync(Func`1 codeBlock)
+   at Microsoft.Identity.Client.Internal.Requests.RequestBase.RunAsync(CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.ApiConfig.Executors.PublicClientExecutor.ExecuteAsync(AcquireTokenCommonParameters commonParameters, AcquireTokenInteractiveParameters interactiveParameters, CancellationToken cancellationToken)
+   at FeuerSoftware.MailAgent.Services.O365AuthenticationService.GetAccessTokenAsync(String username) in /home/runner/work/mail-agent/mail-agent/MailAgent/Services/O365AuthenticationService.cs:line 68
+2025-11-08 19:58:21.718 +00:00 [ERR] Authentication failed for user@company.com
+System.Net.Http.HttpRequestException: Name or service not known (login.microsoftonline.com:443)
+ ---> System.Net.Sockets.SocketException (0xFFFDFFFF): Name or service not known
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError error, CancellationToken cancellationToken)
+   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.System.Threading.Tasks.Sources.IValueTaskSource.GetResult(Int16 token)
+   at System.Net.Sockets.Socket.<ConnectAsync>g__WaitForConnectWithCancellation|285_0(AwaitableSocketAsyncEventArgs saea, ValueTask connectTask, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   --- End of inner exception stack trace ---
+   at System.Net.Http.HttpConnectionPool.ConnectToTcpHostAsync(String host, Int32 port, HttpRequestMessage initialRequest, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.ConnectAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.CreateHttp11ConnectionAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.InjectNewHttp11ConnectionAsync(QueueItem queueItem)
+   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)
+   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)
+   at System.Net.Http.AuthenticationHelper.SendWithAuthAsync(HttpRequestMessage request, Uri authUri, Boolean async, ICredentials credentials, Boolean preAuthenticate, Boolean isProxyAuth, Boolean doRequestAuth, HttpConnectionPool pool, CancellationToken cancellationToken)
+   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)
+   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)
+   at Microsoft.Identity.Client.Http.HttpManager.ExecuteAsync(Uri endpoint, IDictionary`2 headers, HttpContent body, HttpMethod method, X509Certificate2 bindingCertificate, Func`5 validateServerCert, ILoggerAdapter logger, CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.Http.HttpManager.SendRequestAsync(Uri endpoint, IDictionary`2 headers, HttpContent body, HttpMethod method, ILoggerAdapter logger, Boolean doNotThrow, X509Certificate2 bindingCertificate, Func`5 validateServerCert, CancellationToken cancellationToken, IRetryPolicy retryPolicy, Int32 retryCount)
+   at Microsoft.Identity.Client.OAuth2.OAuth2Client.ExecuteRequestAsync[T](Uri endPoint, HttpMethod method, RequestContext requestContext, Boolean expectErrorsOn200OK, Boolean addCommonHeaders, IList`1 onBeforePostRequestHandlers)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.SendInstanceDiscoveryRequestAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.FetchAllDiscoveryMetadataAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.NetworkMetadataProvider.GetMetadataAsync(Uri authority, RequestContext requestContext)
+   at Microsoft.Identity.Client.Instance.Discovery.InstanceDiscoveryManager.FetchNetworkMetadataOrFallbackAsync(RequestContext requestContext, Uri authorityUri)
+   at Microsoft.Identity.Client.Instance.Discovery.InstanceDiscoveryManager.GetMetadataEntryAsync(AuthorityInfo authorityInfo, RequestContext requestContext, Boolean forceValidation)
+   at Microsoft.Identity.Client.Instance.AuthorityManager.RunInstanceDiscoveryAndValidationAsync()
+   at Microsoft.Identity.Client.Internal.Requests.InteractiveRequest.ExecuteAsync(CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.Internal.Requests.RequestBase.<>c__DisplayClass11_1.<<RunAsync>b__1>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.Identity.Client.Utils.StopwatchService.MeasureCodeBlockAsync(Func`1 codeBlock)
+   at Microsoft.Identity.Client.Internal.Requests.RequestBase.RunAsync(CancellationToken cancellationToken)
+   at Microsoft.Identity.Client.ApiConfig.Executors.PublicClientExecutor.ExecuteAsync(AcquireTokenCommonParameters commonParameters, AcquireTokenInteractiveParameters interactiveParameters, CancellationToken cancellationToken)
+   at FeuerSoftware.MailAgent.Services.O365AuthenticationService.GetAccessTokenAsync(String username) in /home/runner/work/mail-agent/mail-agent/MailAgent/Services/O365AuthenticationService.cs:line 68
+   at FeuerSoftware.MailAgent.Services.O365AuthenticationGuide.AuthenticateMailboxAsync(SiteEmailSetting mailbox, Int32 current, Int32 total) in /home/runner/work/mail-agent/mail-agent/MailAgent/Services/O365AuthenticationGuide.cs:line 148
