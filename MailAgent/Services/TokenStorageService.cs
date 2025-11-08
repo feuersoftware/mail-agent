@@ -92,14 +92,9 @@ namespace FeuerSoftware.MailAgent.Services
                 var encryptedToken = await File.ReadAllBytesAsync(filePath);
                 
                 byte[] tokenBytes;
-                if (OperatingSystem.IsWindows())
-                {
-                    tokenBytes = ProtectedData.Unprotect(encryptedToken, _entropy, DataProtectionScope.CurrentUser);
-                }
-                else
-                {
-                    tokenBytes = encryptedToken;
-                }
+                tokenBytes = OperatingSystem.IsWindows()
+                    ? ProtectedData.Unprotect(encryptedToken, _entropy, DataProtectionScope.CurrentUser)
+                    : encryptedToken;
                 
                 return Encoding.UTF8.GetString(tokenBytes);
             }
