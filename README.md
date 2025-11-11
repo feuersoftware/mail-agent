@@ -25,6 +25,3 @@ Die Konfiguration des MailAgents muss in der im gleichen Verzeichnis befindliche
 
 ## Inbetriebnahme
 Der MailAgent kann sowohl als Windows-Dienst oder als normale Anwendung betrieben werden. Für die Registrierung als Windows-Dienst muss die Batchdatei `install.bat` ausgeführt werden. Danach muss der Dienst in den Windows-Einstellungen noch überprüft werden, ob der automatische Start eingestellt ist.s
-
-## Endbestimmungen
-Die Weitergabe dieser Software ist ohne ausdrückliche Genehmigung der Feuer Software GmbH nicht gestattet. Desweiteren wird der MailAgent ausschließlich für Connect-Kunden verfügbar.
