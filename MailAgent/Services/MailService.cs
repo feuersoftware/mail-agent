@@ -13,24 +13,23 @@ namespace FeuerSoftware.MailAgent.Services
     internal class MailService : IMailService, IDisposable
     {
         private readonly MailAgentOptions _options;
-        private readonly IServiceProvider _serviceProvider;
+        private readonly IMailClientFactory _mailClientFactory;
         private readonly ILogger<MailService> _log;
         private readonly Dictionary<string, DateTime> _seenMessages;
         private readonly Subject<(MimeMessage, SiteModel)> _eMailsObservable = new();
         private readonly List<IDisposable?> _eMailsSubscriptions = new();
         private readonly List<IDisposable?> _reconnectionSubscriptions = new();
         private readonly List<IMailClient> _mailClients = new();
-        private readonly List<IDisposable?> _scopes = new();
         private readonly AsyncLock _asyncLock = new();
         private IDisposable? _isLocked;
 
         public MailService(
-            [NotNull] IServiceProvider serviceProvider,
+            [NotNull] IMailClientFactory mailClientFactory,
             [NotNull] IOptions<MailAgentOptions> options,
             [NotNull] ILogger<MailService> log)
         {
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            _mailClientFactory = mailClientFactory ?? throw new ArgumentNullException(nameof(mailClientFactory));
             _log = log ?? throw new ArgumentNullException(nameof(log));
             _seenMessages = new Dictionary<string, DateTime>();
         }
@@ -41,8 +40,7 @@ namespace FeuerSoftware.MailAgent.Services
         {
             foreach (var siteEmailSetting in _options.EmailSettings)
             {
-                var scope = _serviceProvider.CreateScope();
-                var client = scope.ServiceProvider.GetRequiredService<IMailClient>();
+                var client = _mailClientFactory.CreateClient(siteEmailSetting);
 
                 var site = new SiteModel()
                 {
@@ -182,7 +180,6 @@ namespace FeuerSoftware.MailAgent.Services
                     },
                     () => _log.LogDebug("MailSubscription completed."));
 
-                _scopes.Add(scope);
                 _mailClients.Add(client);
                 _reconnectionSubscriptions.Add(reconnectionSubscription);
                 _eMailsSubscriptions.Add(mailSubscription);
@@ -214,11 +211,6 @@ namespace FeuerSoftware.MailAgent.Services
             foreach (var client in _mailClients)
             {
                 client?.Dispose();
-            }
-
-            foreach (var scope in _scopes)
-            {
-                scope?.Dispose();
             }
 
             _isLocked?.Dispose();

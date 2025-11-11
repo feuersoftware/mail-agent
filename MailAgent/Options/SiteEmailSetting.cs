@@ -21,5 +21,7 @@ namespace FeuerSoftware.MailAgent.Options
         public string EMailSubjectFilter { get; set; } = string.Empty;
 
         public string EMailSenderFilter { get; set; } = string.Empty;
+
+        public AuthenticationType AuthenticationType { get; set; } = AuthenticationType.Basic;
     }
 }

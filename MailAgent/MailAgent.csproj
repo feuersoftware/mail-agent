@@ -23,6 +23,11 @@
     <FileVersion>3.0.0</FileVersion>
   </PropertyGroup>
 
+  <!-- Fallback ClientId falls kein /p:O365ClientId übergeben wird -->
+  <PropertyGroup>
+    <O365ClientId Condition="'$(O365ClientId)' == ''">00000000-0000-0000-0000-000000000000</O365ClientId>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <NoWarn>1701;1702, CA2254, CA1816</NoWarn>
   </PropertyGroup>
@@ -49,6 +54,7 @@
     <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.10" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.78.0" />
     <PackageReference Include="MimeKit" Version="4.14.0" />
     <PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
     <PackageReference Include="Polly" Version="8.6.4" />
@@ -62,6 +68,7 @@
     <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="System.Reactive" Version="6.1.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.10" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.10" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.10" />
   </ItemGroup>
@@ -91,6 +98,11 @@
 
   <ItemGroup>
     <Compile Remove="obj\**" />
+  </ItemGroup>
+
+  <!-- Entfernt GenerateBuildSecrets Target und nutzt AssemblyMetadata stattdessen -->
+  <ItemGroup>
+    <AssemblyMetadata Include="FallbackClientId" Value="$(O365ClientId)" />
   </ItemGroup>
 
   <ItemGroup>

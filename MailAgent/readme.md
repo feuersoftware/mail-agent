@@ -12,6 +12,17 @@ Wenn PGP-verschlüsselte Mails empfangen werden sollen, muss auf der betreffende
 ## Funktionsweise
 Die Mails können sowohl via IMAP als auch Microsoft Exchange abgerufen werden. Dies wird in den Einstellungen unter `MailAgentOptions`->`EMailMode` eingestellt. Gültige Werte sind `Imap` oder `Exchange`.
 
+### Authentifizierung
+Der MailAgent unterstützt zwei Authentifizierungsmethoden:
+
+**Basic Authentication:** Klassische Authentifizierung mit Benutzername und Passwort. Diese Methode funktioniert mit IMAP und Exchange (EWS).
+
+**O365 Modern Authentication:** OAuth2-basierte Authentifizierung für Office 365 Postfächer. Diese Methode ist besonders empfohlen für O365-Umgebungen, da Microsoft die Basic Authentication schrittweise deaktiviert.
+* Beim ersten Start des MailAgents wird für jedes konfigurierte O365-Postfach eine interaktive Browser-Anmeldung durchgeführt.
+* Die erhaltenen Tokens werden sicher verschlüsselt auf dem System gespeichert (unter Windows mit Data Protection API).
+* Bei nachfolgenden Starts werden die gespeicherten Tokens automatisch verwendet und bei Bedarf erneuert.
+* Für O365-Authentifizierung muss nur der `EMailUsername` konfiguriert werden, das `EMailPassword`-Feld wird nicht benötigt.
+
 ### Prozessoren
 Um verschiedene Anwendungsfälle abdecken zu können, können beliebig viele Prozessoren registriert werden, um Mails zu verarbeiten. Aktuell sind folgende Prozessoren implementiert:
 Der Prozessor wird in den Einstellungen unter `MailAgentOptions`->`ProcessMode` eingestellt. Gültige Werte sind:
@@ -97,9 +108,12 @@ Unter `EmailSettings` können beliebig viele E-Mail-Accounts mit den zugehörige
 * `EMailHost` -> Der Hostname des Mailservers (z.B. `imap.strato.de` oder bei Exchange z.B. `exchange.meinedomain.de`  (Ohne HTTPS und auch ohne Pfad!)
 * `EMailPort` -> Port des Mailservers (Bei IMAP standardmäßig 993, bei Exchange 443)
 * `EMailUsername` -> Benutzername (Bei Exchange `xy@meinedomain.de`, nicht `meinedomain\xy`)
-* `EMailPassword` -> Passwort
+* `EMailPassword` -> Passwort (Nur bei `Basic` Authentifizierung erforderlich, bei `O365` nicht benötigt)
 * `EMailSubjectFilter` -> Text, der im Betreff der Mail vorhanden sein muss, damit sie verarbeitet wird. Alles andere wird ignoriert.
 * `EMailSenderFilter` -> Text, der im Absender der Mail vorhanden sein muss, damit sie verarbeitet wird. Alles andere wird ignoriert.
+* `AuthenticationType` -> Authentifizierungsart für das Postfach. Gültige Werte sind:
+  * `Basic` -> Klassische Authentifizierung mit Benutzername und Passwort (Standard)
+  * `O365` -> Modern Authentication für Office 365 mit OAuth2. Beim ersten Start erfolgt eine interaktive Anmeldung über den Browser. Die Tokens werden sicher gespeichert und bei Bedarf automatisch erneuert.
 
 Weitere Einstellungen:
 * `EMailPollingIntervalSeconds` -> Abrufintervall der Mails in Sekunden (Standard: 5 Sekunden)
@@ -118,6 +132,7 @@ Weitere Einstellungen:
 * `IgnoreCertificateErrors` -> Auf `true`, wenn Zertifikatsfehler (z.B. für Exchange) ignoriert werden sollen.
 * `HeartbeatInterval` -> Intervall für das Senden von Heartbeats. (z.B. an UptimeRobot)
 * `HeartbeatUrl` -> HTTP-GET Endpunkt, der für Heartbeats aufgerufen werden soll
+* `O365ClientId` -> Die Client-ID für die O365 OAuth2-Authentifizierung (nur erforderlich bei Verwendung von `O365` Authentifizierung). Der Standardwert ist eine öffentliche Client-ID.
 
 ## Copyright
 Copyright Feuer Software GmbH, Karlsbader Str. 16, Eschborn

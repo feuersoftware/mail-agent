@@ -24,5 +24,7 @@ namespace FeuerSoftware.MailAgent.Options
         public TimeSpan? HeartbeatInterval { get; set; } = null;
 
         public string HeartbeatUrl { get; set; } = string.Empty;
+
+        public string O365ClientId { get; set; } = string.Empty;
     }
 }

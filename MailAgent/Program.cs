@@ -51,7 +51,12 @@ namespace FeuerSoftware.MailAgent
                         .AddSingleton<IMailService, MailService>()
                         .AddSingleton<IPGPService, PGPService>()
                         .AddSingleton<IConnectEvaluationService, ConnectEvaluationService>()
-                        .AddSingleton<IConnectApiClient, ConnectApiClient>();
+                        .AddSingleton<IConnectApiClient, ConnectApiClient>()
+                        .AddSingleton<IMailClientFactory, MailClientFactory>()
+                        .AddSingleton<ITokenStorageService, TokenStorageService>()
+                        .AddSingleton<IAuthenticationService, O365AuthenticationService>()
+                        .AddSingleton<ConfigurationValidator>()
+                        .AddSingleton<O365AuthenticationGuide>();
 
                     services
                        .AddHttpClient<HeartbeatService>(c =>
@@ -91,18 +96,6 @@ namespace FeuerSoftware.MailAgent
                             throw new ArgumentOutOfRangeException(nameof(MailAgentOptions.ProcessMode), "ProcessMode not specified in settings.");
                     }
 
-                    switch (options.EMailMode)
-                    {
-                        case EMailMode.Imap:
-                            services.AddTransient<IMailClient, ImapClient>();
-                            break;
-                        case EMailMode.Exchange:
-                            services.AddTransient<IMailClient, ExchangeClient>();
-                            break;
-                        default:
-                            throw new ArgumentOutOfRangeException(nameof(MailAgentOptions.ProcessMode), "EMailMode not specified in settings.");
-                    }
-
                     if (options.IgnoreCertificateErrors)
                     {
 #pragma warning disable SYSLIB0014
@@ -112,7 +105,58 @@ namespace FeuerSoftware.MailAgent
                     }
                 });
 
-            await hostBuilder.Build().RunAsync().ConfigureAwait(false);
+            var host = hostBuilder.Build();
+
+            // Display configuration summary and validate settings
+            var configValidator = host.Services.GetRequiredService<ConfigurationValidator>();
+            var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<MailAgentOptions>>().Value;
+            
+            configValidator.PrintConfigurationSummary();
+            
+            var issues = configValidator.ValidateConfiguration();
+            configValidator.PrintValidationResults(issues);
+
+            // Stop if there are critical configuration errors
+            var hasErrors = issues.Any(i => i.Severity == IssueSeverity.Error);
+            if (hasErrors)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("✗ Cannot start application due to configuration errors.");
+                Console.WriteLine("  Please fix the errors above and restart the application.");
+                Console.ResetColor();
+                Console.WriteLine();
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+                return;
+            }
+
+            // Handle O365 authentication if needed
+            var o365Mailboxes = options.EmailSettings
+                .Where(s => s.AuthenticationType == Options.AuthenticationType.O365)
+                .ToList();
+
+            if (o365Mailboxes.Any())
+            {
+                var authGuide = host.Services.GetRequiredService<O365AuthenticationGuide>();
+                var success = await authGuide.GuideUserThroughAuthenticationAsync(o365Mailboxes, CancellationToken.None).ConfigureAwait(false);
+                
+                if (!success)
+                {
+                    Console.WriteLine("Press any key to exit...");
+                    Console.ReadKey();
+                    return;
+                }
+            }
+
+            // Start the application
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
+            Console.WriteLine("  ✓ Starting MailAgent...");
+            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
+            Console.ResetColor();
+            Console.WriteLine();
+
+            await host.RunAsync().ConfigureAwait(false);
         }
 
         private static void PrintLogo()
