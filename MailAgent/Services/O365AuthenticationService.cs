@@ -33,6 +33,30 @@ namespace FeuerSoftware.MailAgent.Services
                 .WithAuthority(AzureCloudInstance.AzurePublic, "common")
                 .WithRedirectUri("http://localhost")
                 .Build();
+            _publicClientApp.UserTokenCache.SetBeforeAccessAsync(async args =>
+            {
+                var username = args.Account?.Username ?? args.SuggestedCacheKey;
+                if (!string.IsNullOrWhiteSpace(username))
+                {
+                    var tokenData = await _tokenStorage.GetTokenAsByteAsync(username);
+                    if (tokenData != null)
+                    {
+                        args.TokenCache.DeserializeMsalV3(tokenData);
+                    }
+                }
+            });
+            _publicClientApp.UserTokenCache.SetAfterAccessAsync(async args =>
+            {
+                if (args.HasStateChanged)
+                {
+                    var username = args.Account?.Username;
+                    if (!string.IsNullOrWhiteSpace(username))
+                    {
+                        var tokenData = args.TokenCache.SerializeMsalV3();
+                        await _tokenStorage.SaveTokenByteAsync(username, tokenData);
+                    }
+                }
+            });
         }
 
         public async Task<string> GetAccessTokenAsync(string username)
@@ -40,9 +64,9 @@ namespace FeuerSoftware.MailAgent.Services
             try
             {
                 // Try to get token silently first
-                var accounts = await _publicClientApp.GetAccountsAsync();
+                var forceLoadAccountFromCache =  await _publicClientApp.GetAccountAsync(username);
+                var accounts =  await _publicClientApp.GetAccountsAsync();
                 var account = accounts.FirstOrDefault(a => a.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
-
                 if (account != null)
                 {
                     try
@@ -52,7 +76,6 @@ namespace FeuerSoftware.MailAgent.Services
                             .ExecuteAsync();
                         
                         _log.LogDebug($"Acquired token silently for {MaskUsername(username)}");
-                        await _tokenStorage.SaveTokenAsync(username, result.AccessToken);
                         return result.AccessToken;
                     }
                     catch (MsalUiRequiredException)
@@ -67,8 +90,7 @@ namespace FeuerSoftware.MailAgent.Services
                     .WithLoginHint(username)
                     .WithPrompt(Prompt.SelectAccount)
                     .ExecuteAsync();
-
-                await _tokenStorage.SaveTokenAsync(username, interactiveResult.AccessToken);
+                
                 _log.LogInformation($"Acquired token interactively for {MaskUsername(username)}");
                 return interactiveResult.AccessToken;
             }

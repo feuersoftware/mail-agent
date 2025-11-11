@@ -29,10 +29,15 @@ namespace FeuerSoftware.MailAgent.Services
 
         public async Task SaveTokenAsync(string username, string token)
         {
+            var tokenBytes = Encoding.UTF8.GetBytes(token);
+            await SaveTokenByteAsync(username, tokenBytes);
+        }
+
+        public async Task SaveTokenByteAsync(string username, byte[] tokenBytes)
+        {
             try
             {
                 var filePath = GetTokenFilePath(username);
-                var tokenBytes = Encoding.UTF8.GetBytes(token);
                 
                 byte[] encryptedToken;
                 if (OperatingSystem.IsWindows())
@@ -96,6 +101,11 @@ namespace FeuerSoftware.MailAgent.Services
 
         public async Task<string?> GetTokenAsync(string username)
         {
+            return Encoding.UTF8.GetString(await GetTokenAsByteAsync(username) ?? []);
+        }
+        
+        public async Task<byte[]?> GetTokenAsByteAsync(string username)
+        {
             try
             {
                 var filePath = GetTokenFilePath(username);
@@ -112,8 +122,8 @@ namespace FeuerSoftware.MailAgent.Services
                 tokenBytes = OperatingSystem.IsWindows()
                     ? ProtectedData.Unprotect(encryptedToken, _entropy, DataProtectionScope.CurrentUser)
                     : encryptedToken;
-                
-                return Encoding.UTF8.GetString(tokenBytes);
+
+                return tokenBytes;
             }
             catch (CryptographicException ex)
             {
@@ -131,6 +141,7 @@ namespace FeuerSoftware.MailAgent.Services
                 return null;
             }
         }
+        
 
         public Task DeleteTokenAsync(string username)
         {
@@ -159,7 +170,7 @@ namespace FeuerSoftware.MailAgent.Services
         private string GetTokenFilePath(string username)
         {
             // Create a safe filename from the username
-            var safeUsername = Convert.ToBase64String(Encoding.UTF8.GetBytes(username))
+            var safeUsername = Convert.ToBase64String(Encoding.UTF8.GetBytes(username.ToLowerInvariant()))
                 .Replace("/", "_")
                 .Replace("+", "-")
                 .Replace("=", "");
