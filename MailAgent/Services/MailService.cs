@@ -113,7 +113,7 @@ namespace FeuerSoftware.MailAgent.Services
                                     && !sender.Contains(siteEmailSetting.EMailSenderFilter, StringComparison.InvariantCultureIgnoreCase);
 
                                 // Message is too old
-                                if ((DateTimeOffset.Now - eMail.message.Date).Duration() > TimeSpan.FromMinutes(15))
+                                if (!_options.DisableEmailAgeThreshold && (DateTimeOffset.Now - eMail.message.Date).Duration() > TimeSpan.FromMinutes(15))
                                 {
                                     _log.LogInformation($"Mail with subject '{eMail.message.Subject}' received delayed. EMail was sent at {eMail.message.Date.ToLocalTime()}. Ignore and mark as read.");
 

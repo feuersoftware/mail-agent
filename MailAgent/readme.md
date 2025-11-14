@@ -91,6 +91,8 @@ Für das entwickeln der regulären Ausdrücke sind folgende Seiten/Tools hilfrei
 https://regex101.com/ (testen und entwickeln)
 https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions/Cheatsheet (allgemeine Informationen)
 
+**Tipp zum Testen von regulären Ausdrücken:** Um reguläre Ausdrücke mit älteren E-Mails zu testen, kann die Einstellung `DisableEmailAgeThreshold` auf `true` gesetzt werden. Dadurch werden auch E-Mails verarbeitet, die älter als 15 Minuten sind. Siehe Abschnitt `MailAgentOptions` für weitere Details.
+
 ## Konfiguration
 
 ### Abschnitt `Serilog`
@@ -133,6 +135,7 @@ Weitere Einstellungen:
 * `HeartbeatInterval` -> Intervall für das Senden von Heartbeats. (z.B. an UptimeRobot)
 * `HeartbeatUrl` -> HTTP-GET Endpunkt, der für Heartbeats aufgerufen werden soll
 * `O365ClientId` -> Die Client-ID für die O365 OAuth2-Authentifizierung (nur erforderlich bei Verwendung von `O365` Authentifizierung). Der Standardwert ist eine öffentliche Client-ID.
+* `DisableEmailAgeThreshold` -> Deaktiviert die 15-Minuten-Altersschwelle für E-Mails. **Nur für Testzwecke!** Standardmäßig werden E-Mails, die älter als 15 Minuten sind, ignoriert und als gelesen markiert. Wenn diese Einstellung auf `true` gesetzt wird, werden alle ungelesenen E-Mails unabhängig vom Alter verarbeitet. Dies ist nützlich zum Testen von regulären Ausdrücken mit älteren E-Mails. **Warnung:** Diese Einstellung sollte in Produktivumgebungen NICHT aktiviert werden! Bei Aktivierung wird beim Start eine deutliche Warnung angezeigt.
 
 ## Copyright
 Copyright Feuer Software GmbH, Karlsbader Str. 16, Eschborn
