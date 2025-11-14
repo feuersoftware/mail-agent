@@ -21,6 +21,18 @@ namespace FeuerSoftware.MailAgent.Services
         {
             var issues = new List<ConfigurationIssue>();
 
+            // Check if email age threshold is disabled
+            if (_options.DisableEmailAgeThreshold)
+            {
+                issues.Add(new ConfigurationIssue
+                {
+                    Severity = IssueSeverity.Warning,
+                    Category = "EmailAgeThreshold",
+                    Message = "Email age threshold is DISABLED. All unread emails will be processed regardless of age.",
+                    Hint = "This setting is intended for testing purposes only. DO NOT use in production! Set 'DisableEmailAgeThreshold' to false for production use."
+                });
+            }
+
             if (!_options.EmailSettings.Any())
             {
                 issues.Add(new ConfigurationIssue
