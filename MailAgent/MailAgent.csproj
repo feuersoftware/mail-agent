@@ -42,7 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Destructurama.Attributed" Version="5.1.0" />
+    <PackageReference Include="Destructurama.Attributed" Version="5.2.0" />
     <PackageReference Include="gpgme-sharp" Version="2.0.3" />
     <PackageReference Include="MailKit" Version="4.14.1" />
     <PackageReference Include="Microsoft.Exchange.WebServices.NETStandard" Version="1.1.3" />
