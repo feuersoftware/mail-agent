@@ -63,7 +63,6 @@ public static class SettingsEndpoints
                 entity.IgnoreCertificateErrors = dto.IgnoreCertificateErrors;
                 entity.HeartbeatInterval = dto.HeartbeatInterval;
                 entity.HeartbeatUrl = dto.HeartbeatUrl;
-                entity.O365ClientId = dto.O365ClientId;
                 entity.DisableEmailAgeThreshold = dto.DisableEmailAgeThreshold;
             }
             await db.SaveChangesAsync();

@@ -44,7 +44,6 @@ namespace FeuerSoftware.MailAgent.Data
                 if (!string.IsNullOrEmpty(settings.HeartbeatInterval))
                     data[$"{s}:HeartbeatInterval"] = settings.HeartbeatInterval;
                 data[$"{s}:HeartbeatUrl"] = settings.HeartbeatUrl;
-                data[$"{s}:O365ClientId"] = settings.O365ClientId;
                 data[$"{s}:DisableEmailAgeThreshold"] = settings.DisableEmailAgeThreshold.ToString().ToLowerInvariant();
             }
 
@@ -122,7 +121,6 @@ namespace FeuerSoftware.MailAgent.Data
                 existing.IgnoreCertificateErrors = agentSection.GetValue<bool>("IgnoreCertificateErrors", false);
                 existing.HeartbeatInterval = agentSection["HeartbeatInterval"];
                 existing.HeartbeatUrl = agentSection["HeartbeatUrl"] ?? string.Empty;
-                existing.O365ClientId = agentSection["O365ClientId"] ?? string.Empty;
                 existing.DisableEmailAgeThreshold = agentSection.GetValue<bool>("DisableEmailAgeThreshold", false);
 
                 // Email accounts

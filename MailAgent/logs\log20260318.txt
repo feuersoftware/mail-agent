@@ -1,3 +1,6 @@
 2026-03-18 17:55:07.689 +00:00 [DBG] An additional 'IServiceProvider' was created for internal use by Entity Framework. An existing service provider was not used due to the following configuration changes: .
 2026-03-18 17:55:07.756 +00:00 [DBG] Entity Framework Core 9.0.6 initialized 'AppDbContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite:9.0.6' with options: None
 2026-03-18 17:55:08.097 +00:00 [DBG] 'AppDbContext' disposed.
+2026-03-18 21:57:15.301 +00:00 [DBG] An additional 'IServiceProvider' was created for internal use by Entity Framework. An existing service provider was not used due to the following configuration changes: .
+2026-03-18 21:57:15.367 +00:00 [DBG] Entity Framework Core 9.0.6 initialized 'AppDbContext' using provider 'Microsoft.EntityFrameworkCore.Sqlite:9.0.6' with options: None
+2026-03-18 21:57:15.731 +00:00 [DBG] 'AppDbContext' disposed.

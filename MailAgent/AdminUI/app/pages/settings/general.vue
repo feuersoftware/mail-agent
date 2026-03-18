@@ -11,7 +11,6 @@ interface GeneralSettings {
   ignoreCertificateErrors: boolean
   heartbeatInterval: string | null
   heartbeatUrl: string
-  o365ClientId: string
   disableEmailAgeThreshold: boolean
 }
 
@@ -25,7 +24,6 @@ const form = ref<GeneralSettings>({
   ignoreCertificateErrors: false,
   heartbeatInterval: null,
   heartbeatUrl: '',
-  o365ClientId: '',
   disableEmailAgeThreshold: false
 })
 
@@ -140,18 +138,6 @@ async function save() {
             <label class="block text-sm font-medium mb-1">Heartbeat URL</label>
             <UInput v-model="form.heartbeatUrl" placeholder="https://example.com/heartbeat" class="w-full" />
           </div>
-        </div>
-      </UCard>
-
-      <!-- O365 -->
-      <UCard>
-        <template #header>
-          <h2 class="font-semibold">Office 365 (OAuth2)</h2>
-        </template>
-        <div>
-          <label class="block text-sm font-medium mb-1">O365 Client-ID (Azure AD App Registration)</label>
-          <UInput v-model="form.o365ClientId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" class="w-full" />
-          <p class="text-xs text-muted mt-1">Nur erforderlich wenn eigene Azure AD App verwendet wird. Leer lassen für Standard-Client-ID.</p>
         </div>
       </UCard>
 

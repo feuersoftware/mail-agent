@@ -12,7 +12,6 @@ namespace FeuerSoftware.MailAgent.Data
         public bool IgnoreCertificateErrors { get; set; } = false;
         public string? HeartbeatInterval { get; set; }
         public string HeartbeatUrl { get; set; } = string.Empty;
-        public string O365ClientId { get; set; } = string.Empty;
         public bool DisableEmailAgeThreshold { get; set; } = false;
     }
 
