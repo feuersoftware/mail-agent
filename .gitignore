@@ -370,3 +370,12 @@ MailAgent/logs/
 
 # SQLite database (runtime artifact)
 settings.db
+
+# Nuxt Admin UI
+MailAgent/AdminUI/node_modules/
+MailAgent/AdminUI/.output/
+MailAgent/AdminUI/.nuxt/
+MailAgent/AdminUI/dist/
+
+# SQLite database files
+*.db
