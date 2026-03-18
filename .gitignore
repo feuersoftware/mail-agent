@@ -367,3 +367,6 @@ FodyWeavers.xsd
 # Log directory
 logs/
 MailAgent/logs/
+
+# SQLite database (runtime artifact)
+settings.db
