@@ -63,7 +63,11 @@ function removeProperty(index: number) {
   form.value.additionalProperties.splice(index, 1)
 }
 
-type PatternField = { key: keyof Omit<PatternSettings, 'additionalProperties' | 'id'>; label: string; hint: string }
+type PatternField = {
+  key: keyof Omit<PatternSettings, 'additionalProperties' | 'id'>
+  label: string
+  hint: string
+}
 
 const patternFields: PatternField[] = [
   { key: 'startPattern', label: 'Alarmbeginn', hint: 'Zeitstempel des Alarmbeginns' },

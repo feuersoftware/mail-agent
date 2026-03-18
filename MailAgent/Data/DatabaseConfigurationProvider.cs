@@ -8,7 +8,7 @@ namespace FeuerSoftware.MailAgent.Data
     /// Custom IConfigurationProvider that reads MailAgent settings from a SQLite database.
     /// Layered on top of appsettings.json so DB values take precedence.
     /// </summary>
-    public class DatabaseConfigurationProvider : ConfigurationProvider, IDisposable
+    public class DatabaseConfigurationProvider : ConfigurationProvider
     {
         private readonly string _connectionString;
 
@@ -213,9 +213,6 @@ namespace FeuerSoftware.MailAgent.Data
             await db.SaveChangesAsync();
             logger.LogInformation("Seeded default settings.");
         }
-
-    // IDisposable implementation not needed; no unmanaged resources held.
-    public void Dispose() { GC.SuppressFinalize(this); }
     }
 
     public class DatabaseConfigurationSource(string connectionString) : IConfigurationSource

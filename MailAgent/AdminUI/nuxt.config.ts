@@ -2,6 +2,9 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-11',
   ssr: false,
 
+  // Use app/ as the source directory (Nuxt 4 style, compatible with Nuxt 3 via srcDir)
+  srcDir: 'app',
+
   modules: ['@nuxt/ui'],
 
   css: ['~/assets/css/main.css'],
