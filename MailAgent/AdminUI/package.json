@@ -1,0 +1,19 @@
+{
+  "name": "AdminUI",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "dependencies": {
+    "@iconify-json/lucide": "^1.2.97",
+    "@nuxt/ui": "^3.3.0",
+    "nuxt": "^3.16.2",
+    "tailwindcss": "^4.0.0"
+  }
+}

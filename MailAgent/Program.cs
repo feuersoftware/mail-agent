@@ -1,162 +1,219 @@
-﻿using Destructurama;
+﻿using System.Diagnostics;
+using System.Net;
+using System.Text;
+using Destructurama;
+using FeuerSoftware.MailAgent.Data;
+using FeuerSoftware.MailAgent.Endpoints;
 using FeuerSoftware.MailAgent.Options;
 using FeuerSoftware.MailAgent.Processors;
 using FeuerSoftware.MailAgent.Services;
-using Serilog;
-using System.Diagnostics;
-using System.Net;
+using Microsoft.EntityFrameworkCore;
 using Polly;
 using Polly.Extensions.Http;
-using System.Text;
+using Serilog;
 
 namespace FeuerSoftware.MailAgent
 {
     public static class Program
     {
-        public static async Task Main()
+        private const string DatabaseFileName = "settings.db";
+
+        public static async Task Main(string[] args)
         {
             PrintLogo();
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            var hostBuilder = new HostBuilder()
-                .UseWindowsService()
-                .ConfigureAppConfiguration((hostContext, configuration) =>
+            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), DatabaseFileName);
+            var connectionString = $"Data Source={dbPath}";
+
+            var builder = WebApplication.CreateBuilder(args);
+
+            // Support running as Windows Service
+            builder.Host.UseWindowsService();
+
+            // Database configuration source (layered on top of appsettings.json)
+            builder.Configuration.AddDatabaseConfiguration(connectionString);
+
+            if (Debugger.IsAttached)
+            {
+                builder.Configuration.AddUserSecrets("FeuerSoftware_MailAgent");
+            }
+
+            // Serilog
+            builder.Host.UseSerilog((hostContext, configuration) =>
+            {
+                configuration.ReadFrom.Configuration(hostContext.Configuration);
+                configuration.Enrich.WithProperty("Environment", hostContext.HostingEnvironment.EnvironmentName);
+                configuration.Destructure.ToMaximumDepth(5);
+                configuration.Destructure.ToMaximumStringLength(20);
+                configuration.Destructure.UsingAttributes();
+            });
+
+            // Core services
+            builder.Services
+                .AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString), ServiceLifetime.Scoped)
+                .Configure<MailAgentOptions>(builder.Configuration.GetSection(MailAgentOptions.SectionName))
+                .Configure<ConnectPatternOptions>(builder.Configuration.GetSection(ConnectPatternOptions.SectionName))
+                .AddHostedService<Agent>()
+                .AddHostedService<HeartbeatService>()
+                .AddSingleton<IMailService, MailService>()
+                .AddSingleton<IPGPService, PGPService>()
+                .AddSingleton<IConnectEvaluationService, ConnectEvaluationService>()
+                .AddSingleton<IConnectApiClient, ConnectApiClient>()
+                .AddSingleton<IMailClientFactory, MailClientFactory>()
+                .AddSingleton<ITokenStorageService, TokenStorageService>()
+                .AddSingleton<IAuthenticationService, O365AuthenticationService>()
+                .AddSingleton<ConfigurationValidator>()
+                .AddSingleton<O365AuthenticationGuide>();
+
+            builder.Services
+                .AddHttpClient<HeartbeatService>(c =>
                 {
-                    if (Debugger.IsAttached)
+                    c.Timeout = TimeSpan.FromSeconds(100);
+                })
+                .AddPolicyHandler(HttpPolicyExtensions
+                    .HandleTransientHttpError()
+                    .WaitAndRetryAsync(2, retryAttempt => TimeSpan.FromSeconds(Math.Pow(5, retryAttempt))));
+
+            // Register the right IMailProcessor based on ProcessMode config
+            var processModeStr = builder.Configuration["MailAgentOptions:ProcessMode"] ?? "ConnectPlain";
+            if (Enum.TryParse<ProcessMode>(processModeStr, out var processMode))
+            {
+                switch (processMode)
+                {
+                    case ProcessMode.Pdf:
+                        builder.Services.AddSingleton<IMailProcessor, PdfMailProcessor>();
+                        break;
+                    case ProcessMode.Text:
+                        builder.Services.AddSingleton<IMailProcessor, TextMailProcessor>();
+                        break;
+                    case ProcessMode.ConnectEncrypted:
+                        builder.Services.AddSingleton<IMailProcessor, ConnectEncryptedProcessor>();
+                        break;
+                    case ProcessMode.ConnectPgpAttachment:
+                        builder.Services.AddSingleton<IMailProcessor, PgpAttachmentProcessor>();
+                        break;
+                    case ProcessMode.ConnectPlainHtml:
+                        builder.Services.AddSingleton<IMailProcessor, ConnectPlainHtmlProcessor>();
+                        break;
+                    case ProcessMode.ConnectEncryptedHtml:
+                        builder.Services.AddSingleton<IMailProcessor, ConnectEncryptedHtmlProcessor>();
+                        break;
+                    case ProcessMode.ConnectPlain:
+                    default:
+                        builder.Services.AddSingleton<IMailProcessor, ConnectPlainProcessor>();
+                        break;
+                }
+            }
+            else
+            {
+                builder.Services.AddSingleton<IMailProcessor, ConnectPlainProcessor>();
+            }
+
+            // Handle certificate errors
+            var ignoreCerts = builder.Configuration.GetValue<bool>("MailAgentOptions:IgnoreCertificateErrors");
+            if (ignoreCerts)
+            {
+#pragma warning disable SYSLIB0014
+                ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, sslPolicyErrors) => true;
+#pragma warning restore SYSLIB0014
+            }
+
+            // Swagger / OpenAPI
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen();
+
+            // CORS: allow localhost origins for development (SPA proxy) and the same host in production.
+            // This service runs locally as a Windows Service / daemon and is not exposed to the internet.
+            builder.Services.AddCors(options =>
+            {
+                options.AddDefaultPolicy(policy => policy
+                    .SetIsOriginAllowed(origin =>
                     {
-                        configuration.AddUserSecrets("FeuerSoftware_MailAgent");
-                        Console.WriteLine("Expecting configuration from UserSecrets with ID 'FeuerSoftware_MailAgent'.");
+                        if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                            return uri.Host == "localhost" || uri.Host == "127.0.0.1";
+                        return false;
+                    })
+                    .AllowCredentials()
+                    .AllowAnyMethod()
+                    .AllowAnyHeader());
+            });
+
+            // Kestrel on port 5050
+            builder.WebHost.UseUrls("http://localhost:5050");
+
+            var app = builder.Build();
+
+            app.UseSwagger();
+            app.UseSwaggerUI();
+            app.UseCors();
+
+            // REST API endpoints
+            app.MapSettingsEndpoints();
+            app.MapAuthEndpoints();
+
+            // Serve Admin UI SPA
+            app.UseStaticFiles();
+            app.MapFallbackToFile("index.html");
+
+            // Apply EF Core migrations and seed/import on first start
+            using (var scope = app.Services.CreateScope())
+            {
+                var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                context.Database.Migrate();
+
+                var hasData = context.MailAgentSettings.Any() || context.EmailAccounts.Any();
+
+                if (!hasData)
+                {
+                    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger(nameof(DatabaseConfigurationProvider));
+                    var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+
+                    var hasAppSettings = config.GetSection(MailAgentOptions.SectionName).Exists()
+                                      || config.GetSection(ConnectPatternOptions.SectionName).Exists();
+
+                    if (hasAppSettings)
+                    {
+                        logger.LogInformation("Found existing settings in appsettings.json — importing into database...");
+                        await DatabaseConfigurationProvider.ImportFromConfiguration(context, config, logger);
                     }
                     else
                     {
-                        configuration
-                            .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: false, reloadOnChange: true);
-                    }
-                })
-                .UseSerilog((hostContext, configuration) =>
-                {
-                    configuration.ReadFrom.Configuration(hostContext.Configuration);
-                    configuration.Enrich.WithProperty("Environment", hostContext.HostingEnvironment.EnvironmentName);
-                    configuration.Destructure.ToMaximumDepth(5);
-                    configuration.Destructure.ToMaximumStringLength(20);
-                    configuration.Destructure.UsingAttributes();
-                })
-                .ConfigureServices((hostContext, services) =>
-                {
-                    services
-                        .Configure<MailAgentOptions>(hostContext.Configuration.GetRequiredSection(MailAgentOptions.SectionName))
-                        .Configure<ConnectPatternOptions>(hostContext.Configuration.GetRequiredSection(ConnectPatternOptions.SectionName))
-                        .AddHostedService<Agent>()
-                        .AddHostedService<HeartbeatService>()
-                        .AddSingleton<IMailService, MailService>()
-                        .AddSingleton<IPGPService, PGPService>()
-                        .AddSingleton<IConnectEvaluationService, ConnectEvaluationService>()
-                        .AddSingleton<IConnectApiClient, ConnectApiClient>()
-                        .AddSingleton<IMailClientFactory, MailClientFactory>()
-                        .AddSingleton<ITokenStorageService, TokenStorageService>()
-                        .AddSingleton<IAuthenticationService, O365AuthenticationService>()
-                        .AddSingleton<ConfigurationValidator>()
-                        .AddSingleton<O365AuthenticationGuide>();
-
-                    services
-                       .AddHttpClient<HeartbeatService>(c =>
-                       {
-                           c.Timeout = TimeSpan.FromSeconds(100); // Needs to be this high
-                       })
-                       .AddPolicyHandler(HttpPolicyExtensions
-                           .HandleTransientHttpError()
-                           .WaitAndRetryAsync(2, retryAttempt => TimeSpan.FromSeconds(Math.Pow(5, retryAttempt))));
-
-                    var options = hostContext.Configuration.GetRequiredSection(MailAgentOptions.SectionName).Get<MailAgentOptions>()!;
-
-                    switch (options.ProcessMode)
-                    {
-                        case ProcessMode.Pdf:
-                            services.AddSingleton<IMailProcessor, PdfMailProcessor>();
-                            break;
-                        case ProcessMode.Text:
-                            services.AddSingleton<IMailProcessor, TextMailProcessor>();
-                            break;
-                        case ProcessMode.ConnectPlain:
-                            services.AddSingleton<IMailProcessor, ConnectPlainProcessor>();
-                            break;
-                        case ProcessMode.ConnectEncrypted:
-                            services.AddSingleton<IMailProcessor, ConnectEncryptedProcessor>();
-                            break;
-                        case ProcessMode.ConnectPgpAttachment:
-                            services.AddSingleton<IMailProcessor, PgpAttachmentProcessor>();
-                            break;
-                        case ProcessMode.ConnectPlainHtml:
-                            services.AddSingleton<IMailProcessor, ConnectPlainHtmlProcessor>();
-                            break;
-                        case ProcessMode.ConnectEncryptedHtml:
-                            services.AddSingleton<IMailProcessor, ConnectEncryptedHtmlProcessor>();
-                            break;
-                        default:
-                            throw new ArgumentOutOfRangeException(nameof(MailAgentOptions.ProcessMode), "ProcessMode not specified in settings.");
+                        await DatabaseConfigurationProvider.SeedDefaults(context, logger);
                     }
 
-                    if (options.IgnoreCertificateErrors)
-                    {
-#pragma warning disable SYSLIB0014
-                        ServicePointManager
-                            .ServerCertificateValidationCallback += (sender, cert, chain, sslPolicyErrors) => true;
-#pragma warning restore SYSLIB0014
-                    }
-                });
-
-            var host = hostBuilder.Build();
-
-            // Display configuration summary and validate settings
-            var configValidator = host.Services.GetRequiredService<ConfigurationValidator>();
-            var options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<MailAgentOptions>>().Value;
-            
-            configValidator.PrintConfigurationSummary();
-            
-            var issues = configValidator.ValidateConfiguration();
-            configValidator.PrintValidationResults(issues);
-
-            // Stop if there are critical configuration errors
-            var hasErrors = issues.Any(i => i.Severity == IssueSeverity.Error);
-            if (hasErrors)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("✗ Cannot start application due to configuration errors.");
-                Console.WriteLine("  Please fix the errors above and restart the application.");
-                Console.ResetColor();
-                Console.WriteLine();
-                Console.WriteLine("Press any key to exit...");
-                Console.ReadKey();
-                return;
-            }
-
-            // Handle O365 authentication if needed
-            var o365Mailboxes = options.EmailSettings
-                .Where(s => s.AuthenticationType == Options.AuthenticationType.O365)
-                .ToList();
-
-            if (o365Mailboxes.Any())
-            {
-                var authGuide = host.Services.GetRequiredService<O365AuthenticationGuide>();
-                var success = await authGuide.GuideUserThroughAuthenticationAsync(o365Mailboxes, CancellationToken.None).ConfigureAwait(false);
-                
-                if (!success)
-                {
-                    Console.WriteLine("Press any key to exit...");
-                    Console.ReadKey();
-                    return;
+                    ((IConfigurationRoot)app.Configuration).Reload();
                 }
             }
 
-            // Start the application
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
-            Console.WriteLine("  ✓ Starting MailAgent...");
-            Console.WriteLine("═══════════════════════════════════════════════════════════════════════");
-            Console.ResetColor();
-            Console.WriteLine();
+            // Display configuration summary
+            var configValidator = app.Services.GetRequiredService<ConfigurationValidator>();
+            configValidator.PrintConfigurationSummary();
+            var issues = configValidator.ValidateConfiguration();
+            configValidator.PrintValidationResults(issues);
 
-            await host.RunAsync().ConfigureAwait(false);
+            // Open browser after startup
+            app.Lifetime.ApplicationStarted.Register(() =>
+            {
+                var url = "http://localhost:5050";
+                try
+                {
+                    if (OperatingSystem.IsWindows())
+                        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                    else if (OperatingSystem.IsMacOS())
+                        Process.Start("open", url);
+                    else if (OperatingSystem.IsLinux())
+                        Process.Start("xdg-open", url);
+                }
+                catch (Exception ex)
+                {
+                    // Browser launch is best-effort; failure should not affect service operation.
+                    Log.Warning(ex, "Could not open browser at {Url}.", url);
+                }
+            });
+
+            await app.RunAsync().ConfigureAwait(false);
         }
 
         private static void PrintLogo()
@@ -172,26 +229,26 @@ namespace FeuerSoftware.MailAgent
             **** ,,,,,   ,,,,
            /**** ,,,,,,   ,,,,                          #) Verbindungen per IMAP oder Exchange EWS möglich
            //**   ,,,,,,   ,,,,,
-       (   ///**   ,,,,,,   *,,,,                       #) Konfiguration erfolgt in der Datei appsettings.json
-      ((   ///**    ,,,,,,.  ,,,,,                         Prozessoren: Pdf (mit PGP), Text (mit PGP) und 
-      ((    ///**,    ,,,,,,  ,,,,                         ConnectPlain (ohne PGP)
+       (   ///**   ,,,,,,   *,,,,                       #) Konfiguration über Admin UI auf Port 5050
+      ((   ///**    ,,,,,,.  ,,,,,                         
+      ((    ///**,    ,,,,,,  ,,,,                         
       #((    ///***    ,,,,,* ,,,,                      
-      #(((*   *//***    ,,,,, ,,,,                      #) Für den Betrieb mit PGP muss das Tool GnuPG installiert sein
-       #((((    /****    ,,,,,,,,                          und die entsprechenden Schlüssel in Kleopatra importiert sein.
+      #(((*   *//***    ,,,,, ,,,,                      
+       #((((    /****    ,,,,,,,,                          
          ((((/   /****    ,,,,,,                           
           ((((//  /****   ,,,,
-            (((//  /***   ,,,                           #) Es können mehrere Mailpostfächer parallel überwacht werden.
-             (((// /***   ,                                             
-               (/////*                                             Version: {assembly.GetName().Version} 
-                (/////                                  MailAgent für unbegrenzt viele Standorte und Organisationen
-                  ////                                  Feuer Software GmbH | Karlsbaderstr. 16 | 65760 Eschborn
+            (((//  /***   ,,,                                        Version: {assembly.GetName().Version} 
+             (((// /***   ,                             MailAgent für unbegrenzt viele Standorte und Organisationen
+               (/////*                                  Feuer Software GmbH | Karlsbaderstr. 16 | 65760 Eschborn
+                (/////
+                  ////
                    //";
 
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine(Logo);
-
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine();
         }
     }
 }
+
