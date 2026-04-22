@@ -106,7 +106,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.5" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.6" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.5" />
     <EmbeddedResource Remove="obj\**" />
   </ItemGroup>
