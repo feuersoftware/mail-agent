@@ -20,6 +20,7 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly List<IDisposable?> _eMailsSubscriptions = new();
         private readonly List<IDisposable?> _reconnectionSubscriptions = new();
         private readonly List<IMailClient> _mailClients = new();
+        private static readonly TimeSpan OperationTimeout = TimeSpan.FromMinutes(2);
 
         public MailService(
             [NotNull] IMailClientFactory mailClientFactory,
@@ -49,8 +50,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                 try
                 {
-                    using var initialConnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    initialConnectCts.CancelAfter(TimeSpan.FromMinutes(2));
+                    using var initialConnectCts = CreateBoundedToken(cancellationToken);
 
                     await client.Connect(
                         siteEmailSetting.EMailHost,
@@ -69,21 +69,11 @@ namespace FeuerSoftware.MailAgent.Services
                     .Interval(TimeSpan.FromMinutes(60))
                     .SubscribeAsyncSafe(async _ =>
                     {
-                        using var reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        reconnectCts.CancelAfter(TimeSpan.FromMinutes(2));
-                        var reconnectToken = reconnectCts.Token;
+                        using var reconnectCts = CreateBoundedToken(cancellationToken);
 
-                        using (await clientLock.LockAsync(reconnectToken).ConfigureAwait(false))
+                        using (await clientLock.LockAsync(reconnectCts.Token).ConfigureAwait(false))
                         {
-                            _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
-                            await client.Disconnect().ConfigureAwait(false);
-                            await client.Connect(
-                                siteEmailSetting.EMailHost,
-                                siteEmailSetting.EMailPort,
-                                siteEmailSetting.EMailUsername,
-                                siteEmailSetting.EMailPassword,
-                                reconnectToken)
-                            .ConfigureAwait(false);
+                            await ReconnectAsync(client, siteEmailSetting, reconnectCts.Token).ConfigureAwait(false);
                         }
                     },
                     _log.LogAndContinue($"Failed to reconnect ({siteEmailSetting.Name})."),
@@ -99,8 +89,7 @@ namespace FeuerSoftware.MailAgent.Services
                     .TakeWhile(x => !cancellationToken.IsCancellationRequested)
                     .SubscribeAsyncSafe(async x =>
                     {
-                        using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        tickCts.CancelAfter(TimeSpan.FromMinutes(2));
+                        using var tickCts = CreateBoundedToken(cancellationToken);
                         var tickToken = tickCts.Token;
 
                         using (await clientLock.LockAsync(tickToken).ConfigureAwait(false))
@@ -165,22 +154,12 @@ namespace FeuerSoftware.MailAgent.Services
                     {
                         try
                         {
-                            using var reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                            reconnectCts.CancelAfter(TimeSpan.FromMinutes(2));
-                            var reconnectToken = reconnectCts.Token;
+                            using var reconnectCts = CreateBoundedToken(cancellationToken);
 
-                            using (await clientLock.LockAsync(reconnectToken).ConfigureAwait(false))
+                            using (await clientLock.LockAsync(reconnectCts.Token).ConfigureAwait(false))
                             {
                                 _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
-                                _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
-                                await client.Disconnect().ConfigureAwait(false);
-                                await client.Connect(
-                                    siteEmailSetting.EMailHost,
-                                    siteEmailSetting.EMailPort,
-                                    siteEmailSetting.EMailUsername,
-                                    siteEmailSetting.EMailPassword,
-                                    reconnectToken)
-                                .ConfigureAwait(false);
+                                await ReconnectAsync(client, siteEmailSetting, reconnectCts.Token).ConfigureAwait(false);
                             }
                         }
                         catch (Exception otherEx)
@@ -202,7 +181,11 @@ namespace FeuerSoftware.MailAgent.Services
 
             foreach (var client in _mailClients)
             {
-                await client.Disconnect().ConfigureAwait(false);
+                // Uses its own bounded timeout rather than `cancellationToken`, which is typically already
+                // signaled by the time StopAsync runs (that's why we're stopping) - passing it straight
+                // through would abort the disconnect immediately instead of allowing a clean QUIT handshake.
+                using var disconnectCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await client.Disconnect(disconnectCts.Token).ConfigureAwait(false);
             }
         }
 
@@ -222,6 +205,26 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 client?.Dispose();
             }
+        }
+
+        private static CancellationTokenSource CreateBoundedToken(CancellationToken outer)
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(outer);
+            cts.CancelAfter(OperationTimeout);
+            return cts;
+        }
+
+        private async Task ReconnectAsync(IMailClient client, SiteEmailSetting siteEmailSetting, CancellationToken cancellationToken)
+        {
+            _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
+            await client.Disconnect(cancellationToken).ConfigureAwait(false);
+            await client.Connect(
+                siteEmailSetting.EMailHost,
+                siteEmailSetting.EMailPort,
+                siteEmailSetting.EMailUsername,
+                siteEmailSetting.EMailPassword,
+                cancellationToken)
+            .ConfigureAwait(false);
         }
 
         private void ClearOutdatedAlreadySeenAt()
