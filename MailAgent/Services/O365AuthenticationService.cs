@@ -70,9 +70,15 @@ namespace FeuerSoftware.MailAgent.Services
                 {
                     try
                     {
+                        // Also raced against cancellationToken from the outside (not just passed into
+                        // ExecuteAsync): AcquireTokenSilent goes through the same token-cache callbacks as
+                        // GetAccountsAsync above, which do uncancellable disk/DPAPI I/O that MSAL's own
+                        // cancellation handling can't reach - ExecuteAsync(cancellationToken) alone only
+                        // bounds MSAL's network round-trip, not a stalled cache read.
                         var result = await _publicClientApp
                             .AcquireTokenSilent(_scopes, account)
-                            .ExecuteAsync(cancellationToken);
+                            .ExecuteAsync(cancellationToken)
+                            .WaitAsync(cancellationToken);
 
                         _log.LogDebug($"Acquired token silently for {MaskUsername(username)}");
                         return result.AccessToken;
@@ -95,11 +101,14 @@ namespace FeuerSoftware.MailAgent.Services
                         $"Silent token acquisition failed for {MaskUsername(username)} and interactive authentication was not requested for this call. Re-authenticate the account interactively first.");
                 }
 
+                // Same rationale as the AcquireTokenSilent call above: race it externally too, since the
+                // token-cache callbacks it goes through can't be interrupted by ExecuteAsync's own token.
                 var interactiveResult = await _publicClientApp
                     .AcquireTokenInteractive(_scopes)
                     .WithLoginHint(username)
                     .WithPrompt(Prompt.SelectAccount)
-                    .ExecuteAsync(cancellationToken);
+                    .ExecuteAsync(cancellationToken)
+                    .WaitAsync(cancellationToken);
 
                 _log.LogInformation($"Acquired token interactively for {MaskUsername(username)}");
                 return interactiveResult.AccessToken;
