@@ -80,11 +80,7 @@ namespace FeuerSoftware.MailAgent
                     _log.LogError(ex, "Failed to process mail '{@Mail}'.", siteMail);
                 }
             },
-            ex =>
-            {
-                _log.LogError(ex, "Failed to process mails.");
-                return Task.CompletedTask;
-            },
+            _log.LogAndContinue("Failed to process mails."),
             () => _log.LogWarning("EMails subscription completed unexpectedly."));
         }
 

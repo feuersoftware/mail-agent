@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Identity.Client;
 using System.Diagnostics.CodeAnalysis;
 
@@ -59,7 +60,7 @@ namespace FeuerSoftware.MailAgent.Services
             });
         }
 
-        public async Task<string> GetAccessTokenAsync(string username)
+        public async Task<string> GetAccessTokenAsync(string username, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -73,8 +74,8 @@ namespace FeuerSoftware.MailAgent.Services
                     {
                         var result = await _publicClientApp
                             .AcquireTokenSilent(_scopes, account)
-                            .ExecuteAsync();
-                        
+                            .ExecuteAsync(cancellationToken);
+
                         _log.LogDebug($"Acquired token silently for {MaskUsername(username)}");
                         return result.AccessToken;
                     }
@@ -84,20 +85,25 @@ namespace FeuerSoftware.MailAgent.Services
                     }
                 }
 
-                // If silent acquisition fails, try interactive - but only when a user is actually present to
-                // complete the browser sign-in. On a headless host (e.g. running as a Windows Service),
-                // this call would otherwise block forever waiting for interaction that can never happen.
-                if (!Environment.UserInteractive)
+                // If silent acquisition fails, try interactive - but only when running with an actual
+                // interactive desktop session to complete the browser sign-in. When running as a Windows
+                // Service (Session 0, no desktop), this call would otherwise block forever waiting for
+                // interaction that can never happen. WindowsServiceHelpers.IsWindowsService() (rather than
+                // Environment.UserInteractive) is used because it's the same signal Program.cs's
+                // UseWindowsService() relies on, and it correctly leaves the documented interactive first-run
+                // setup flow (O365AuthenticationGuide, run from a console before the service loop starts)
+                // unaffected, since that flow is never itself running as a Windows Service.
+                if (WindowsServiceHelpers.IsWindowsService())
                 {
                     throw new InvalidOperationException(
-                        $"Silent token acquisition failed for {MaskUsername(username)} and interactive authentication is not available in this (non-interactive) environment. Re-authenticate the account interactively first.");
+                        $"Silent token acquisition failed for {MaskUsername(username)} and interactive authentication is not available while running as a Windows Service. Re-authenticate the account interactively first.");
                 }
 
                 var interactiveResult = await _publicClientApp
                     .AcquireTokenInteractive(_scopes)
                     .WithLoginHint(username)
                     .WithPrompt(Prompt.SelectAccount)
-                    .ExecuteAsync();
+                    .ExecuteAsync(cancellationToken);
 
                 _log.LogInformation($"Acquired token interactively for {MaskUsername(username)}");
                 return interactiveResult.AccessToken;
@@ -123,7 +129,7 @@ namespace FeuerSoftware.MailAgent.Services
                 try
                 {
                     _log.LogInformation($"Authenticating user: {MaskUsername(username)}");
-                    await GetAccessTokenAsync(username);
+                    await GetAccessTokenAsync(username, cancellationToken);
                 }
                 catch (Exception ex)
                 {

@@ -27,7 +27,7 @@ namespace FeuerSoftware.MailAgent.Services
             await _client.ConnectAsync(host, port, SecureSocketOptions.SslOnConnect, cancellationToken);
 
             // Get OAuth2 access token
-            var accessToken = await _authService.GetAccessTokenAsync(username);
+            var accessToken = await _authService.GetAccessTokenAsync(username, cancellationToken);
 
             // Authenticate using OAuth2
             var oauth2 = new SaslMechanismOAuth2(username, accessToken);

@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics.CodeAnalysis;
 using System.Reactive.Linq;
 
 namespace FeuerSoftware.MailAgent.Extensions
@@ -29,7 +30,28 @@ namespace FeuerSoftware.MailAgent.Extensions
                     }
                 }))
                 .Concat()
-                .Subscribe(_ => { }, ex => onError(ex), onCompleted);
+                .Subscribe(_ => { }, ex =>
+                {
+                    // Only reached if the already-awaited onError(ex) above itself faults (a "double fault").
+                    // IObserver<T>.OnError is synchronous, so this can't be awaited - and per Rx semantics,
+                    // reaching here terminates this subscription permanently (no more ticks for this mailbox).
+                    // We can't prevent that, but we still observe the task's exception so it isn't reported
+                    // as an unobserved task exception.
+                    _ = onError(ex).ContinueWith(t => t.Exception, TaskContinuationOptions.ExecuteSynchronously);
+                }, onCompleted);
+        }
+
+        /// <summary>
+        /// Builds a `Func&lt;Exception, Task&gt;` error handler for <see cref="SubscribeAsyncSafe{T}"/> that just
+        /// logs and continues - the common case for subscriptions with no reconnect logic of their own.
+        /// </summary>
+        public static Func<Exception, Task> LogAndContinue(this ILogger logger, string message)
+        {
+            return ex =>
+            {
+                logger.LogError(ex, message);
+                return Task.CompletedTask;
+            };
         }
     }
 }
