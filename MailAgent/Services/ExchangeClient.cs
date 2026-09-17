@@ -50,7 +50,7 @@ namespace FeuerSoftware.MailAgent.Services
                 _log.LogDebug("Checking for last 10 mails...");
 
                 var sw1 = Stopwatch.StartNew();
-                var result = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10));
+                var result = await WithCancellation(_exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10)), cancellationToken);
                 sw1.Stop();
                 _log.LogDebug($"FindItems took '{sw1.ElapsedMilliseconds}ms'");
 
@@ -63,7 +63,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 var sw2 = Stopwatch.StartNew();
-                var getItemResponses = await _exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet);
+                var getItemResponses = await WithCancellation(_exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet), cancellationToken);
                 sw2.Stop();
                 _log.LogDebug($"BindMessage took '{sw2.ElapsedMilliseconds}ms'");
 
@@ -78,7 +78,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                     using (var stream = new MemoryStream(messageData, false))
                     {
-                        message = await MimeMessage.LoadAsync(stream);
+                        message = await MimeMessage.LoadAsync(stream, cancellationToken);
                     }
 
                     eMails.Add((message, item.Id.UniqueId));
@@ -97,7 +97,7 @@ namespace FeuerSoftware.MailAgent.Services
         {
             try
             {
-                var results = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5));
+                var results = await WithCancellation(_exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5)), cancellationToken);
 
                 var mail = results
                     .OfType<EmailMessage>()
@@ -110,7 +110,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 mail.IsRead = true;
-                await mail.Update(ConflictResolutionMode.AutoResolve);
+                await WithCancellation(mail.Update(ConflictResolutionMode.AutoResolve), cancellationToken);
 
                 _log.LogDebug($"Marked Mail with Mail-ID '{mailId}' as seen.");
             }
@@ -118,6 +118,24 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 _log.LogError(ex, "Failed to mark message as seen.");
             }
+        }
+
+        /// <summary>
+        /// Bounds an EWS call by <paramref name="cancellationToken"/>. The Exchange Web Services API used
+        /// here has no CancellationToken-accepting overloads of its own, so a stuck call can't actually be
+        /// aborted - but racing it against the token at least stops it from holding the caller's lock
+        /// forever; the abandoned EWS call is left to complete or fail in the background.
+        /// </summary>
+        private static async System.Threading.Tasks.Task<T> WithCancellation<T>(System.Threading.Tasks.Task<T> task, CancellationToken cancellationToken)
+        {
+            var cancellationTask = System.Threading.Tasks.Task.Delay(Timeout.Infinite, cancellationToken);
+            var completed = await System.Threading.Tasks.Task.WhenAny(task, cancellationTask).ConfigureAwait(false);
+            if (completed == cancellationTask)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            return await task.ConfigureAwait(false);
         }
     }
 }

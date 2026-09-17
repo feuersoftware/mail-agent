@@ -68,7 +68,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 var mailbox = o365Mailboxes[i];
-                var success = await AuthenticateMailboxAsync(mailbox, i + 1, o365Mailboxes.Count);
+                var success = await AuthenticateMailboxAsync(mailbox, i + 1, o365Mailboxes.Count, cancellationToken);
 
                 if (!success)
                 {
@@ -125,7 +125,7 @@ namespace FeuerSoftware.MailAgent.Services
             return allSuccess;
         }
 
-        private async Task<bool> AuthenticateMailboxAsync(SiteEmailSetting mailbox, int current, int total)
+        private async Task<bool> AuthenticateMailboxAsync(SiteEmailSetting mailbox, int current, int total, CancellationToken cancellationToken)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine($"[{current}/{total}] Authenticating: {mailbox.Name}");
@@ -145,7 +145,7 @@ namespace FeuerSoftware.MailAgent.Services
             try
             {
                 var username = mailbox.EMailUsername;
-                await _authService.GetAccessTokenAsync(username);
+                await _authService.GetAccessTokenAsync(username, cancellationToken);
                 return true;
             }
             catch (Microsoft.Identity.Client.MsalException ex)

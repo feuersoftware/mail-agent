@@ -49,11 +49,15 @@ namespace FeuerSoftware.MailAgent.Services
 
                 try
                 {
+                    using var initialConnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    initialConnectCts.CancelAfter(TimeSpan.FromMinutes(2));
+
                     await client.Connect(
                         siteEmailSetting.EMailHost,
                         siteEmailSetting.EMailPort,
                         siteEmailSetting.EMailUsername,
-                        siteEmailSetting.EMailPassword);
+                        siteEmailSetting.EMailPassword,
+                        initialConnectCts.Token);
                 }
                 catch (Exception ex)
                 {
@@ -65,7 +69,11 @@ namespace FeuerSoftware.MailAgent.Services
                     .Interval(TimeSpan.FromMinutes(60))
                     .SubscribeAsyncSafe(async _ =>
                     {
-                        using (await clientLock.LockAsync().ConfigureAwait(false))
+                        using var reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        reconnectCts.CancelAfter(TimeSpan.FromMinutes(2));
+                        var reconnectToken = reconnectCts.Token;
+
+                        using (await clientLock.LockAsync(reconnectToken).ConfigureAwait(false))
                         {
                             _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
                             await client.Disconnect().ConfigureAwait(false);
@@ -73,15 +81,12 @@ namespace FeuerSoftware.MailAgent.Services
                                 siteEmailSetting.EMailHost,
                                 siteEmailSetting.EMailPort,
                                 siteEmailSetting.EMailUsername,
-                                siteEmailSetting.EMailPassword)
+                                siteEmailSetting.EMailPassword,
+                                reconnectToken)
                             .ConfigureAwait(false);
                         }
                     },
-                    e =>
-                    {
-                        _log.LogError(e, $"Failed to reconnect ({siteEmailSetting.Name}).");
-                        return Task.CompletedTask;
-                    },
+                    _log.LogAndContinue($"Failed to reconnect ({siteEmailSetting.Name})."),
                     () => _log.LogWarning($"Reconnection subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
 
                 if (_options.EMailPollingIntervalSeconds < 4)
@@ -94,11 +99,11 @@ namespace FeuerSoftware.MailAgent.Services
                     .TakeWhile(x => !cancellationToken.IsCancellationRequested)
                     .SubscribeAsyncSafe(async x =>
                     {
-                        using var tickTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-                        using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, tickTimeout.Token);
-                        var tickToken = linkedTokenSource.Token;
+                        using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        tickCts.CancelAfter(TimeSpan.FromMinutes(2));
+                        var tickToken = tickCts.Token;
 
-                        using (await clientLock.LockAsync().ConfigureAwait(false))
+                        using (await clientLock.LockAsync(tickToken).ConfigureAwait(false))
                         {
                             ClearOutdatedAlreadySeenAt();
 
@@ -160,7 +165,11 @@ namespace FeuerSoftware.MailAgent.Services
                     {
                         try
                         {
-                            using (await clientLock.LockAsync().ConfigureAwait(false))
+                            using var reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            reconnectCts.CancelAfter(TimeSpan.FromMinutes(2));
+                            var reconnectToken = reconnectCts.Token;
+
+                            using (await clientLock.LockAsync(reconnectToken).ConfigureAwait(false))
                             {
                                 _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
                                 _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
@@ -169,7 +178,8 @@ namespace FeuerSoftware.MailAgent.Services
                                     siteEmailSetting.EMailHost,
                                     siteEmailSetting.EMailPort,
                                     siteEmailSetting.EMailUsername,
-                                    siteEmailSetting.EMailPassword)
+                                    siteEmailSetting.EMailPassword,
+                                    reconnectToken)
                                 .ConfigureAwait(false);
                             }
                         }
