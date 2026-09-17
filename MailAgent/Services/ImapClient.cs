@@ -48,9 +48,9 @@ namespace FeuerSoftware.MailAgent.Services
             return eMails;
         }
 
-        public async Task Disconnect()
+        public async Task Disconnect(CancellationToken cancellationToken = default)
         {
-            await _client.DisconnectAsync(true);
+            await _client.DisconnectAsync(true, cancellationToken);
             _log.LogInformation("Imap disconnected.");
         }
 

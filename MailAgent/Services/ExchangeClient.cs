@@ -14,7 +14,14 @@ namespace FeuerSoftware.MailAgent.Services
         public ExchangeClient(ILogger<ExchangeClient> log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
-            _exchangeService = new ExchangeService();
+            _exchangeService = new ExchangeService
+            {
+                // Bounds the underlying HTTP request itself, so a hung call actually gets aborted by EWS
+                // instead of merely being raced against our own cancellation token and left running in the
+                // background (see the WaitAsync(cancellationToken) calls below, which only bound how long
+                // *we* wait for it).
+                Timeout = (int)TimeSpan.FromMinutes(2).TotalMilliseconds,
+            };
         }
 
         public System.Threading.Tasks.Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
@@ -31,7 +38,7 @@ namespace FeuerSoftware.MailAgent.Services
             return System.Threading.Tasks.Task.CompletedTask;
         }
 
-        public System.Threading.Tasks.Task Disconnect()
+        public System.Threading.Tasks.Task Disconnect(CancellationToken cancellationToken = default)
         {
             // Exchange Service has no long-term connection. We dont have to disconnect.
             return System.Threading.Tasks.Task.CompletedTask;
@@ -50,7 +57,7 @@ namespace FeuerSoftware.MailAgent.Services
                 _log.LogDebug("Checking for last 10 mails...");
 
                 var sw1 = Stopwatch.StartNew();
-                var result = await WithCancellation(_exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10)), cancellationToken);
+                var result = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10)).WaitAsync(cancellationToken);
                 sw1.Stop();
                 _log.LogDebug($"FindItems took '{sw1.ElapsedMilliseconds}ms'");
 
@@ -63,7 +70,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 var sw2 = Stopwatch.StartNew();
-                var getItemResponses = await WithCancellation(_exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet), cancellationToken);
+                var getItemResponses = await _exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet).WaitAsync(cancellationToken);
                 sw2.Stop();
                 _log.LogDebug($"BindMessage took '{sw2.ElapsedMilliseconds}ms'");
 
@@ -97,7 +104,7 @@ namespace FeuerSoftware.MailAgent.Services
         {
             try
             {
-                var results = await WithCancellation(_exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5)), cancellationToken);
+                var results = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5)).WaitAsync(cancellationToken);
 
                 var mail = results
                     .OfType<EmailMessage>()
@@ -110,7 +117,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 mail.IsRead = true;
-                await WithCancellation(mail.Update(ConflictResolutionMode.AutoResolve), cancellationToken);
+                await mail.Update(ConflictResolutionMode.AutoResolve).WaitAsync(cancellationToken);
 
                 _log.LogDebug($"Marked Mail with Mail-ID '{mailId}' as seen.");
             }
@@ -118,24 +125,6 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 _log.LogError(ex, "Failed to mark message as seen.");
             }
-        }
-
-        /// <summary>
-        /// Bounds an EWS call by <paramref name="cancellationToken"/>. The Exchange Web Services API used
-        /// here has no CancellationToken-accepting overloads of its own, so a stuck call can't actually be
-        /// aborted - but racing it against the token at least stops it from holding the caller's lock
-        /// forever; the abandoned EWS call is left to complete or fail in the background.
-        /// </summary>
-        private static async System.Threading.Tasks.Task<T> WithCancellation<T>(System.Threading.Tasks.Task<T> task, CancellationToken cancellationToken)
-        {
-            var cancellationTask = System.Threading.Tasks.Task.Delay(Timeout.Infinite, cancellationToken);
-            var completed = await System.Threading.Tasks.Task.WhenAny(task, cancellationTask).ConfigureAwait(false);
-            if (completed == cancellationTask)
-            {
-                throw new OperationCanceledException(cancellationToken);
-            }
-
-            return await task.ConfigureAwait(false);
         }
     }
 }
