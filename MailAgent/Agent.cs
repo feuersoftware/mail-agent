@@ -83,8 +83,9 @@ namespace FeuerSoftware.MailAgent
             ex =>
             {
                 _log.LogError(ex, "Failed to process mails.");
+                return Task.CompletedTask;
             },
-            () => _log.LogDebug("EMails subscription completed."));
+            () => _log.LogWarning("EMails subscription completed unexpectedly."));
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)

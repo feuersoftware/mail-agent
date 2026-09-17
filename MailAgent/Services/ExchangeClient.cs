@@ -17,7 +17,7 @@ namespace FeuerSoftware.MailAgent.Services
             _exchangeService = new ExchangeService();
         }
 
-        public System.Threading.Tasks.Task Connect(string host, int port, string username, string password)
+        public System.Threading.Tasks.Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
         {
             if (port != 443)
             {
@@ -42,7 +42,7 @@ namespace FeuerSoftware.MailAgent.Services
             // We have nothing to dispose here.
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -93,7 +93,7 @@ namespace FeuerSoftware.MailAgent.Services
             }
         }
 
-        public async System.Threading.Tasks.Task MarkMessageSeenByUID(string mailId)
+        public async System.Threading.Tasks.Task MarkMessageSeenByUID(string mailId, CancellationToken cancellationToken = default)
         {
             try
             {
