@@ -84,13 +84,21 @@ namespace FeuerSoftware.MailAgent.Services
                     }
                 }
 
-                // If silent acquisition fails, try interactive
+                // If silent acquisition fails, try interactive - but only when a user is actually present to
+                // complete the browser sign-in. On a headless host (e.g. running as a Windows Service),
+                // this call would otherwise block forever waiting for interaction that can never happen.
+                if (!Environment.UserInteractive)
+                {
+                    throw new InvalidOperationException(
+                        $"Silent token acquisition failed for {MaskUsername(username)} and interactive authentication is not available in this (non-interactive) environment. Re-authenticate the account interactively first.");
+                }
+
                 var interactiveResult = await _publicClientApp
                     .AcquireTokenInteractive(_scopes)
                     .WithLoginHint(username)
                     .WithPrompt(Prompt.SelectAccount)
                     .ExecuteAsync();
-                
+
                 _log.LogInformation($"Acquired token interactively for {MaskUsername(username)}");
                 return interactiveResult.AccessToken;
             }

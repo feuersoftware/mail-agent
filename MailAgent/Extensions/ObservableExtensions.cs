@@ -8,7 +8,7 @@ namespace FeuerSoftware.MailAgent.Extensions
         public static IDisposable SubscribeAsyncSafe<T>(
             [NotNull] this IObservable<T> source,
             [NotNull] Func<T, Task> onNextAsync,
-            [NotNull] Action<Exception> onError,
+            [NotNull] Func<Exception, Task> onError,
             [NotNull] Action onCompleted)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
@@ -25,11 +25,11 @@ namespace FeuerSoftware.MailAgent.Extensions
                     }
                     catch (Exception ex)
                     {
-                        onError(ex);
+                        await onError(ex).ConfigureAwait(false);
                     }
                 }))
                 .Concat()
-                .Subscribe(_ => { }, onError, onCompleted);
+                .Subscribe(_ => { }, ex => onError(ex), onCompleted);
         }
     }
 }

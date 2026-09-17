@@ -20,8 +20,6 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly List<IDisposable?> _eMailsSubscriptions = new();
         private readonly List<IDisposable?> _reconnectionSubscriptions = new();
         private readonly List<IMailClient> _mailClients = new();
-        private readonly AsyncLock _asyncLock = new();
-        private IDisposable? _isLocked;
 
         public MailService(
             [NotNull] IMailClientFactory mailClientFactory,
@@ -41,6 +39,7 @@ namespace FeuerSoftware.MailAgent.Services
             foreach (var siteEmailSetting in _options.EmailSettings)
             {
                 var client = _mailClientFactory.CreateClient(siteEmailSetting);
+                var clientLock = new AsyncLock();
 
                 var site = new SiteModel()
                 {
@@ -66,7 +65,7 @@ namespace FeuerSoftware.MailAgent.Services
                     .Interval(TimeSpan.FromMinutes(60))
                     .SubscribeAsyncSafe(async _ =>
                     {
-                        using (_isLocked = await _asyncLock.LockAsync())
+                        using (await clientLock.LockAsync().ConfigureAwait(false))
                         {
                             _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
                             await client.Disconnect().ConfigureAwait(false);
@@ -80,10 +79,10 @@ namespace FeuerSoftware.MailAgent.Services
                     },
                     e =>
                     {
-                        _log.LogError(e, "Failed to reconnect.");
-                        _isLocked?.Dispose();
+                        _log.LogError(e, $"Failed to reconnect ({siteEmailSetting.Name}).");
+                        return Task.CompletedTask;
                     },
-                    () => _log.LogDebug("Reconnection subscription completed."));
+                    () => _log.LogWarning($"Reconnection subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
 
                 if (_options.EMailPollingIntervalSeconds < 4)
                 {
@@ -95,11 +94,15 @@ namespace FeuerSoftware.MailAgent.Services
                     .TakeWhile(x => !cancellationToken.IsCancellationRequested)
                     .SubscribeAsyncSafe(async x =>
                     {
-                        using (_isLocked = await _asyncLock.LockAsync())
+                        using var tickTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                        using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, tickTimeout.Token);
+                        var tickToken = linkedTokenSource.Token;
+
+                        using (await clientLock.LockAsync().ConfigureAwait(false))
                         {
                             ClearOutdatedAlreadySeenAt();
 
-                            var eMails = await client.GetUnseenMails().ConfigureAwait(false);
+                            var eMails = await client.GetUnseenMails(tickToken).ConfigureAwait(false);
 
                             var eMailsToProcess = new List<(MimeMessage message, string id)>();
 
@@ -117,7 +120,7 @@ namespace FeuerSoftware.MailAgent.Services
                                 {
                                     _log.LogInformation($"Mail with subject '{eMail.message.Subject}' received delayed. EMail was sent at {eMail.message.Date.ToLocalTime()}. Ignore and mark as read.");
 
-                                    await client.MarkMessageSeenByUID(eMail.id).ConfigureAwait(false);
+                                    await client.MarkMessageSeenByUID(eMail.id, tickToken).ConfigureAwait(false);
                                     continue;
                                 }
 
@@ -143,7 +146,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                                 _seenMessages.Add(eMail.id, DateTime.Now);
                                 eMailsToProcess.Add(eMail);
-                                await client.MarkMessageSeenByUID(eMail.id).ConfigureAwait(false);
+                                await client.MarkMessageSeenByUID(eMail.id, tickToken).ConfigureAwait(false);
                             }
 
                             foreach (var (message, id) in eMailsToProcess)
@@ -157,9 +160,7 @@ namespace FeuerSoftware.MailAgent.Services
                     {
                         try
                         {
-                            _isLocked?.Dispose();
-
-                            using (_isLocked = await _asyncLock.LockAsync())
+                            using (await clientLock.LockAsync().ConfigureAwait(false))
                             {
                                 _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
                                 _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
@@ -174,11 +175,10 @@ namespace FeuerSoftware.MailAgent.Services
                         }
                         catch (Exception otherEx)
                         {
-                            _isLocked?.Dispose();
-                            _log.LogError(otherEx, "Failed to handle Exception from fetching Mails.");
+                            _log.LogError(otherEx, $"Failed to handle exception from fetching mails for site '{siteEmailSetting.Name}'.");
                         }
                     },
-                    () => _log.LogDebug("MailSubscription completed."));
+                    () => _log.LogWarning($"Mail subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
 
                 _mailClients.Add(client);
                 _reconnectionSubscriptions.Add(reconnectionSubscription);
@@ -212,8 +212,6 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 client?.Dispose();
             }
-
-            _isLocked?.Dispose();
         }
 
         private void ClearOutdatedAlreadySeenAt()

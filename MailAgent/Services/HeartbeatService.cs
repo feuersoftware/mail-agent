@@ -60,7 +60,11 @@ namespace FeuerSoftware.MailAgent.Services
                 {
                     await SendHeartbeat();
                 },
-                e => _log.LogError(e, "Failed to send heartbeat request."),
+                e =>
+                {
+                    _log.LogError(e, "Failed to send heartbeat request.");
+                    return Task.CompletedTask;
+                },
                 () => _log.LogDebug("HeartbeatSubscription completed."));
 
             await SendHeartbeat();
