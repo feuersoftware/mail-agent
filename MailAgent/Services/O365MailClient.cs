@@ -20,23 +20,25 @@ namespace FeuerSoftware.MailAgent.Services
             _client = new MailKit.Net.Imap.ImapClient();
         }
 
-        public async Task Connect(string host, int port, string username, string password)
+        public async Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
         {
             _log.LogDebug($"Connecting to O365 IMAP-Host '{host}' on port '{port}' with username '{username}' using OAuth2...");
-            
-            await _client.ConnectAsync(host, port, SecureSocketOptions.SslOnConnect);
-            
-            // Get OAuth2 access token
-            var accessToken = await _authService.GetAccessTokenAsync(username);
-            
+
+            await _client.ConnectAsync(host, port, SecureSocketOptions.SslOnConnect, cancellationToken);
+
+            // Get OAuth2 access token. allowInteractive is always false here: this path runs from
+            // automatic background (re)connects while holding the per-mailbox lock, where an interactive
+            // browser prompt could never be completed and would otherwise hang that lock forever.
+            var accessToken = await _authService.GetAccessTokenAsync(username, allowInteractive: false, cancellationToken);
+
             // Authenticate using OAuth2
             var oauth2 = new SaslMechanismOAuth2(username, accessToken);
-            await _client.AuthenticateAsync(oauth2);
-            
+            await _client.AuthenticateAsync(oauth2, cancellationToken);
+
             _log.LogInformation($"Connected to O365 IMAP-Host '{host}' with username '{username}' using OAuth2.");
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(CancellationToken cancellationToken = default)
         {
             _log.LogDebug("Checking for unseen mails...");
             var eMails = new List<(MimeMessage message, string id)>();
@@ -44,15 +46,15 @@ namespace FeuerSoftware.MailAgent.Services
             EnsureConnected();
 
             var inbox = _client.Inbox;
-            await inbox.OpenAsync(FolderAccess.ReadOnly);
+            await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-            var mailIds = await inbox.SearchAsync(MailKit.Search.SearchQuery.NotSeen);
+            var mailIds = await inbox.SearchAsync(MailKit.Search.SearchQuery.NotSeen, cancellationToken);
 
             _log.LogDebug($"Found {mailIds.Count} unread mails.");
 
             foreach (var mailId in mailIds)
             {
-                var mail = await inbox.GetMessageAsync(mailId);
+                var mail = await inbox.GetMessageAsync(mailId, cancellationToken);
 
                 eMails.Add((message: mail, id: mailId.Id.ToString()));
             }
@@ -60,9 +62,9 @@ namespace FeuerSoftware.MailAgent.Services
             return eMails;
         }
 
-        public async Task Disconnect()
+        public async Task Disconnect(CancellationToken cancellationToken = default)
         {
-            await _client.DisconnectAsync(true);
+            await _client.DisconnectAsync(true, cancellationToken);
             _log.LogInformation("O365 IMAP disconnected.");
         }
 
@@ -71,16 +73,16 @@ namespace FeuerSoftware.MailAgent.Services
             _client.Dispose();
         }
 
-        public async Task MarkMessageSeenByUID(string mailId)
+        public async Task MarkMessageSeenByUID(string mailId, CancellationToken cancellationToken = default)
         {
             EnsureConnected();
             var uid = Convert.ToUInt32(mailId);
 
             var inbox = _client.Inbox;
 
-            await inbox.OpenAsync(FolderAccess.ReadWrite);
+            await inbox.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-            await inbox.SetFlagsAsync(new UniqueId(uid), MessageFlags.Seen, default);
+            await inbox.SetFlagsAsync(new UniqueId(uid), MessageFlags.Seen, false, cancellationToken);
 
             _log.LogDebug($"Marked '{mailId}' as seen.");
         }

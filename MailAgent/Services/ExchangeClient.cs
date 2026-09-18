@@ -14,10 +14,18 @@ namespace FeuerSoftware.MailAgent.Services
         public ExchangeClient(ILogger<ExchangeClient> log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
-            _exchangeService = new ExchangeService();
+            _exchangeService = new ExchangeService
+            {
+                // Bounds the underlying HTTP request itself, so a hung call actually gets aborted by EWS
+                // instead of merely being raced against our own cancellation token and left running in the
+                // background (see the WaitAsync(cancellationToken) calls below, which only bound how long
+                // *we* wait for it). Shares MailOperationTimeouts.HungCallTimeout with MailService's own
+                // bound so the two layers can't silently drift out of sync.
+                Timeout = (int)MailOperationTimeouts.HungCallTimeout.TotalMilliseconds,
+            };
         }
 
-        public System.Threading.Tasks.Task Connect(string host, int port, string username, string password)
+        public System.Threading.Tasks.Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
         {
             if (port != 443)
             {
@@ -31,7 +39,7 @@ namespace FeuerSoftware.MailAgent.Services
             return System.Threading.Tasks.Task.CompletedTask;
         }
 
-        public System.Threading.Tasks.Task Disconnect()
+        public System.Threading.Tasks.Task Disconnect(CancellationToken cancellationToken = default)
         {
             // Exchange Service has no long-term connection. We dont have to disconnect.
             return System.Threading.Tasks.Task.CompletedTask;
@@ -42,7 +50,7 @@ namespace FeuerSoftware.MailAgent.Services
             // We have nothing to dispose here.
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -50,7 +58,7 @@ namespace FeuerSoftware.MailAgent.Services
                 _log.LogDebug("Checking for last 10 mails...");
 
                 var sw1 = Stopwatch.StartNew();
-                var result = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10));
+                var result = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(10)).WaitAsync(cancellationToken);
                 sw1.Stop();
                 _log.LogDebug($"FindItems took '{sw1.ElapsedMilliseconds}ms'");
 
@@ -63,7 +71,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 var sw2 = Stopwatch.StartNew();
-                var getItemResponses = await _exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet);
+                var getItemResponses = await _exchangeService.BindToItems(filteredItems.Select(i => i.Id), _customPropertySet).WaitAsync(cancellationToken);
                 sw2.Stop();
                 _log.LogDebug($"BindMessage took '{sw2.ElapsedMilliseconds}ms'");
 
@@ -78,7 +86,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                     using (var stream = new MemoryStream(messageData, false))
                     {
-                        message = await MimeMessage.LoadAsync(stream);
+                        message = await MimeMessage.LoadAsync(stream, cancellationToken);
                     }
 
                     eMails.Add((message, item.Id.UniqueId));
@@ -93,11 +101,11 @@ namespace FeuerSoftware.MailAgent.Services
             }
         }
 
-        public async System.Threading.Tasks.Task MarkMessageSeenByUID(string mailId)
+        public async System.Threading.Tasks.Task MarkMessageSeenByUID(string mailId, CancellationToken cancellationToken = default)
         {
             try
             {
-                var results = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5));
+                var results = await _exchangeService.FindItems(WellKnownFolderName.Inbox, new ItemView(5)).WaitAsync(cancellationToken);
 
                 var mail = results
                     .OfType<EmailMessage>()
@@ -110,7 +118,7 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 mail.IsRead = true;
-                await mail.Update(ConflictResolutionMode.AutoResolve);
+                await mail.Update(ConflictResolutionMode.AutoResolve).WaitAsync(cancellationToken);
 
                 _log.LogDebug($"Marked Mail with Mail-ID '{mailId}' as seen.");
             }
