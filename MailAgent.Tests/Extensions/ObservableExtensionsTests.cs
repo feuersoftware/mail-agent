@@ -44,7 +44,7 @@ public class ObservableExtensionsTests
     }
 
     [Fact]
-    public async Task ExceptionInOnNextAsync_IsRoutedToOnErrorAndAwaited()
+    public async Task ExceptionInOnNextAsync_PassesTheThrownExceptionToOnError()
     {
         var source = new Subject<int>();
         var thrown = new InvalidOperationException("boom");
@@ -53,13 +53,11 @@ public class ObservableExtensionsTests
 
         using var subscription = source.SubscribeAsyncSafe(
             _ => throw thrown,
-            async ex =>
+            ex =>
             {
-                // Yield first so this only completes if the caller actually awaits onError,
-                // rather than firing it and moving on (the original "async void" bug this fixed).
-                await Task.Yield();
                 observed = ex;
                 onErrorCompleted.SetResult();
+                return Task.CompletedTask;
             },
             () => { });
 
@@ -68,6 +66,58 @@ public class ObservableExtensionsTests
         await onErrorCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Same(thrown, observed);
+    }
+
+    [Fact]
+    public async Task SlowOnError_BlocksTheNextValueFromBeingProcessed()
+    {
+        // Regression test for the original bug: onError used to be fired-and-forgotten (async void),
+        // so the next tick could start - and race a shared, non-thread-safe mail connection - while a
+        // reconnect triggered from onError was still running. SubscribeAsyncSafe must fully await
+        // onError (not just onNextAsync) before Concat() lets the next OnNext through.
+        var source = new Subject<int>();
+        var onErrorStarted = new TaskCompletionSource();
+        var onErrorMayFinish = new TaskCompletionSource();
+        var secondValueProcessed = new TaskCompletionSource();
+
+        using var subscription = source.SubscribeAsyncSafe(
+            value =>
+            {
+                if (value == 1)
+                {
+                    throw new InvalidOperationException("boom");
+                }
+
+                secondValueProcessed.SetResult();
+                return Task.CompletedTask;
+            },
+            async _ =>
+            {
+                onErrorStarted.SetResult();
+                await onErrorMayFinish.Task;
+            },
+            () => { });
+
+        try
+        {
+            source.OnNext(1);
+            await onErrorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            source.OnNext(2);
+
+            // The second value must NOT be processed while onError (simulating a reconnect) is
+            // still running.
+            var winner = await Task.WhenAny(secondValueProcessed.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.NotSame(secondValueProcessed.Task, winner);
+        }
+        finally
+        {
+            // Release onError's gate even if the assertion above failed, so a caught regression
+            // doesn't leave this test's async lambda permanently suspended.
+            onErrorMayFinish.TrySetResult();
+        }
+
+        await secondValueProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -136,16 +186,23 @@ public class ObservableExtensionsTests
             _ => Task.CompletedTask,
             () => { });
 
-        source.OnNext(1);
-        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            source.OnNext(1);
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        source.OnNext(2);
+            source.OnNext(2);
 
-        // The second value must NOT be processed while the first is still in flight.
-        var winner = await Task.WhenAny(secondStarted.Task, Task.Delay(TimeSpan.FromMilliseconds(200)));
-        Assert.NotSame(secondStarted.Task, winner);
-
-        firstMayFinish.SetResult();
+            // The second value must NOT be processed while the first is still in flight.
+            var winner = await Task.WhenAny(secondStarted.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.NotSame(secondStarted.Task, winner);
+        }
+        finally
+        {
+            // Release the first tick's gate even if the assertion above failed, so a caught
+            // regression doesn't leave this test's async lambda permanently suspended.
+            firstMayFinish.TrySetResult();
+        }
 
         await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(overlapDetected);

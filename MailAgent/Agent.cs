@@ -86,6 +86,15 @@ namespace FeuerSoftware.MailAgent
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Dead code under the .NET Generic Host today: StartAsync/StopAsync above are already
+            // full IHostedService overrides that don't call base.StartAsync/base.StopAsync, so
+            // BackgroundService never schedules this method via Task.Run - the host calls
+            // StartAsync/StopAsync directly instead. If this override structure is ever "cleaned up"
+            // to rely on ExecuteAsync again, MailService.StopAsync would then sometimes receive an
+            // already-cancelled stoppingToken here (this loop only calls StopAsync after its own
+            // token is already cancelled), reintroducing the "disconnect aborted before a clean QUIT
+            // handshake" failure mode MailService.StopAsync's own cancellation handling exists to
+            // avoid on the real, host-driven shutdown path.
             await StartAsync(stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
