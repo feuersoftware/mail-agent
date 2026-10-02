@@ -24,20 +24,18 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly List<MailClientEntry> _mailClients = new();
         private CancellationTokenSource? _stoppingCts;
 
-        private static readonly TimeSpan ShutdownDisconnectTimeout = TimeSpan.FromSeconds(30);
-        private static readonly TimeSpan InitialConnectRetryInterval = TimeSpan.FromMinutes(5);
+        private readonly MailOperationTimeouts _timeouts;
 
-        // A reconnect attempt can legitimately hold a client's lock for up to 2x
-        // MailOperationTimeouts.HungCallTimeout (an independent budget for Disconnect, then for
-        // Connect - see ReconnectAsync). LockWaitTimeout stays comfortably above that worst case so a
-        // concurrently-waiting subscription doesn't give up on a merely-slow-not-hung holder.
-        private static readonly TimeSpan LockWaitTimeout = (MailOperationTimeouts.HungCallTimeout * 2) + TimeSpan.FromSeconds(30);
+        // Shutdown isn't real-time critical: allow a clean LOGOUT handshake.
+        private static readonly TimeSpan ShutdownDisconnectTimeout = TimeSpan.FromSeconds(30);
 
         public MailService(
             [NotNull] IMailClientFactory mailClientFactory,
             [NotNull] IOptions<MailAgentOptions> options,
-            [NotNull] ILogger<MailService> log)
+            [NotNull] ILogger<MailService> log,
+            MailOperationTimeouts? timeouts = null)
         {
+            _timeouts = timeouts ?? MailOperationTimeouts.Default;
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _mailClientFactory = mailClientFactory ?? throw new ArgumentNullException(nameof(mailClientFactory));
             _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -94,7 +92,7 @@ namespace FeuerSoftware.MailAgent.Services
         {
             try
             {
-                using var connectCts = CreateBoundedToken(cancellationToken);
+                using var connectCts = CreateBoundedToken(cancellationToken, _timeouts.Connect);
 
                 await client.Connect(
                     siteEmailSetting.EMailHost,
@@ -114,11 +112,13 @@ namespace FeuerSoftware.MailAgent.Services
 
         private async Task RetryConnectAsync(MailClientEntry entry, SiteEmailSetting siteEmailSetting, SiteModel site, CancellationToken cancellationToken)
         {
+            var failures = 0;
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    await Task.Delay(InitialConnectRetryInterval, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(_timeouts.Backoff(++failures), cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -139,12 +139,13 @@ namespace FeuerSoftware.MailAgent.Services
         {
             var client = entry.Client;
             var clientLock = entry.Lock;
+            var reconnectFailures = 0;
 
             var reconnectionSubscription = Observable
                 .Interval(TimeSpan.FromMinutes(60))
                 .SubscribeAsyncSafe(async _ =>
                 {
-                    using var lockWaitCts = CreateBoundedToken(cancellationToken, LockWaitTimeout);
+                    using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
 
                     using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
                     {
@@ -159,11 +160,14 @@ namespace FeuerSoftware.MailAgent.Services
                 .TakeWhile(x => !cancellationToken.IsCancellationRequested)
                 .SubscribeAsyncSafe(async x =>
                 {
-                    using var tickCts = CreateBoundedToken(cancellationToken);
-                    var tickToken = tickCts.Token;
+                    using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
 
-                    using (await clientLock.LockAsync(tickToken).ConfigureAwait(false))
+                    using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
                     {
+                        // Own budget starting after the lock is held, so waiting for a reconnect doesn't eat it.
+                        using var tickCts = CreateBoundedToken(cancellationToken, _timeouts.FetchTick);
+                        var tickToken = tickCts.Token;
+
                         ClearOutdatedAlreadySeenAt();
 
                         var eMails = await client.GetUnseenMails(tickToken).ConfigureAwait(false);
@@ -224,17 +228,32 @@ namespace FeuerSoftware.MailAgent.Services
                 {
                     try
                     {
-                        using var lockWaitCts = CreateBoundedToken(cancellationToken, LockWaitTimeout);
+                        using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
 
                         using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
                         {
                             _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
                             await ReconnectAsync(client, siteEmailSetting, cancellationToken).ConfigureAwait(false);
                         }
+
+                        reconnectFailures = 0;
                     }
                     catch (Exception otherEx)
                     {
                         _log.LogError(otherEx, $"Failed to handle exception from fetching mails for site '{siteEmailSetting.Name}'.");
+
+                        // Without a delay a persistent failure (DNS, auth) would retry on every poll tick
+                        // plus a burst from ticks queued meanwhile (O365 throttling). Delaying here also holds
+                        // back those queued ticks, since this handler is serialized with them. The first
+                        // attempt after a fresh failure is never delayed; the cap stays low (real-time).
+                        try
+                        {
+                            await Task.Delay(_timeouts.Backoff(++reconnectFailures), cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // shutting down
+                        }
                     }
                 },
                 () => _log.LogWarning($"Mail subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
@@ -275,7 +294,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                     using (await entry.Lock.LockAsync(disconnectCts.Token).ConfigureAwait(false))
                     {
-                        await entry.Client.Disconnect(disconnectCts.Token).ConfigureAwait(false);
+                        await entry.Client.Disconnect(cancellationToken: disconnectCts.Token).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)
@@ -307,10 +326,10 @@ namespace FeuerSoftware.MailAgent.Services
             _stoppingCts?.Dispose();
         }
 
-        private static CancellationTokenSource CreateBoundedToken(CancellationToken outer, TimeSpan? timeout = null)
+        private static CancellationTokenSource CreateBoundedToken(CancellationToken outer, TimeSpan timeout)
         {
             var cts = CancellationTokenSource.CreateLinkedTokenSource(outer);
-            cts.CancelAfter(timeout ?? MailOperationTimeouts.HungCallTimeout);
+            cts.CancelAfter(timeout);
             return cts;
         }
 
@@ -320,8 +339,10 @@ namespace FeuerSoftware.MailAgent.Services
 
             try
             {
-                using var disconnectCts = CreateBoundedToken(cancellationToken);
-                await client.Disconnect(disconnectCts.Token).ConfigureAwait(false);
+                // quit:false - the connection is dead or about to be replaced, so don't wait for a LOGOUT
+                // round trip; just close the socket.
+                using var disconnectCts = CreateBoundedToken(cancellationToken, _timeouts.Disconnect);
+                await client.Disconnect(quit: false, disconnectCts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -332,7 +353,7 @@ namespace FeuerSoftware.MailAgent.Services
                 _log.LogWarning(ex, $"Failed to cleanly disconnect '{siteEmailSetting.Name}' before reconnecting; attempting to connect anyway.");
             }
 
-            using (var connectCts = CreateBoundedToken(cancellationToken))
+            using (var connectCts = CreateBoundedToken(cancellationToken, _timeouts.Connect))
             {
                 await client.Connect(
                     siteEmailSetting.EMailHost,

@@ -19,9 +19,9 @@ namespace FeuerSoftware.MailAgent.Services
                 // Bounds the underlying HTTP request itself, so a hung call actually gets aborted by EWS
                 // instead of merely being raced against our own cancellation token and left running in the
                 // background (see the WaitAsync(cancellationToken) calls below, which only bound how long
-                // *we* wait for it). Shares MailOperationTimeouts.HungCallTimeout with MailService's own
-                // bound so the two layers can't silently drift out of sync.
-                Timeout = (int)MailOperationTimeouts.HungCallTimeout.TotalMilliseconds,
+                // *we* wait for it). Derived from the same budgets as MailService's tick bound so the
+                // two layers can't silently drift out of sync.
+                Timeout = (int)MailOperationTimeouts.Default.EwsRequest.TotalMilliseconds,
             };
         }
 
@@ -39,7 +39,7 @@ namespace FeuerSoftware.MailAgent.Services
             return System.Threading.Tasks.Task.CompletedTask;
         }
 
-        public System.Threading.Tasks.Task Disconnect(CancellationToken cancellationToken = default)
+        public System.Threading.Tasks.Task Disconnect(bool quit = true, CancellationToken cancellationToken = default)
         {
             // Exchange Service has no long-term connection. We dont have to disconnect.
             return System.Threading.Tasks.Task.CompletedTask;

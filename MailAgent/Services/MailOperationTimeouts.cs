@@ -1,18 +1,62 @@
 namespace FeuerSoftware.MailAgent.Services
 {
     /// <summary>
-    /// Shared timeout budgets for bounding mail-server operations that have no cancellation support of
-    /// their own, so a single hung call can no longer block a per-mailbox lock forever. Kept in one place
-    /// so the different layers that each need to know "how long is a hung mail-server call tolerated"
-    /// (the outer wait in MailService, EWS's own transport timeout in ExchangeClient) can't silently drift
-    /// out of sync with each other.
+    /// Time budgets for mail-server operations. The agent raises real-time alarms, so a dead connection
+    /// must be noticed within seconds - but a slow, still-progressing download must never be aborted.
+    /// Hence two layers: <see cref="IoInactivity"/> (MailKit's socket timeout, resets with every byte) is the
+    /// PRIMARY detector for dead/half-open connections; the other budgets are wall-clock safety nets for
+    /// hangs that I/O timeouts can't see (MSAL token cache, EWS).
+    ///
+    /// Worst case without a successful poll (poll interval 5 s not included):
+    ///  (a) dead IMAP/O365 connection: IoInactivity 15 s + Disconnect ~0 s (quit:false closes the socket)
+    ///      + Connect 1-3 s healthy => ~16-20 s; hard cap IoInactivity + Disconnect + Connect = 50 s.
+    ///  (b) safety net only (hang without I/O timeout, e.g. MSAL; EWS): FetchTick + Disconnect + Connect = 155 s.
+    ///  (c) persistent outage: reconnect attempts are spaced by <see cref="Backoff"/>, at most every 30 s.
     /// </summary>
-    internal static class MailOperationTimeouts
+    internal sealed record MailOperationTimeouts
     {
+        public static readonly MailOperationTimeouts Default = new();
+
+        /// <summary>MailKit socket Read/Write timeout: silence this long = dead connection. Data flowing never trips it.</summary>
+        public TimeSpan IoInactivity { get; init; } = TimeSpan.FromSeconds(15);
+
+        /// <summary>Connect incl. TCP, TLS, OAuth token and AUTH (healthy: 1-3 s). Safety net, mainly for MSAL (no I/O timeout).</summary>
+        public TimeSpan Connect { get; init; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>Disconnect before a reconnect. Only a safety net: quit:false just closes the socket.</summary>
+        public TimeSpan Disconnect { get; init; } = TimeSpan.FromSeconds(5);
+
         /// <summary>
-        /// How long a single connect/fetch/disconnect operation against a mail server is allowed to run
-        /// before it's considered hung and abandoned/retried.
+        /// One poll tick. Safety net only, deliberately generous: GetUnseenMails downloads ALL unseen mails every
+        /// round (mails ignored by a filter stay unseen), so a tight cap could abort the same big download forever
+        /// and block alarm mails behind it. Equals the old limit, so EWS gets no worse.
         /// </summary>
-        public static readonly TimeSpan HungCallTimeout = TimeSpan.FromMinutes(2);
+        public TimeSpan FetchTick { get; init; } = TimeSpan.FromSeconds(120);
+
+        public TimeSpan ReconnectBackoffBase { get; init; } = TimeSpan.FromSeconds(5);
+
+        public TimeSpan ReconnectBackoffMax { get; init; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>Upper bound of any lock holder's hold time (tick, or Disconnect + Connect).</summary>
+        public TimeSpan LockWait => FetchTick + Disconnect + Connect;
+
+        /// <summary>EWS has no I/O inactivity timeout, so its request timeout follows the tick budget (as before).</summary>
+        public TimeSpan EwsRequest => FetchTick;
+
+        public TimeSpan WorstCaseDeadConnection => IoInactivity + Disconnect + Connect;
+
+        public TimeSpan WorstCaseSafetyNetOnly => FetchTick + Disconnect + Connect;
+
+        /// <summary>Delay after the n-th consecutive failed (re)connect: 5, 10, 20, 30, 30 ... s. The first attempt is never delayed.</summary>
+        public TimeSpan Backoff(int failures)
+        {
+            if (failures <= 0)
+            {
+                return TimeSpan.Zero;
+            }
+
+            var delay = ReconnectBackoffBase * Math.Pow(2, Math.Min(failures - 1, 10));
+            return delay < ReconnectBackoffMax ? delay : ReconnectBackoffMax;
+        }
     }
 }

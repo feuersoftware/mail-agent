@@ -13,7 +13,7 @@ namespace FeuerSoftware.MailAgent.Services
             [NotNull] ILogger<ImapClient> log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
-            _client = new MailKit.Net.Imap.ImapClient();
+            _client = new MailKit.Net.Imap.ImapClient { Timeout = (int)MailOperationTimeouts.Default.IoInactivity.TotalMilliseconds };
         }
 
         public async Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
@@ -48,9 +48,9 @@ namespace FeuerSoftware.MailAgent.Services
             return eMails;
         }
 
-        public async Task Disconnect(CancellationToken cancellationToken = default)
+        public async Task Disconnect(bool quit = true, CancellationToken cancellationToken = default)
         {
-            await _client.DisconnectAsync(true, cancellationToken);
+            await _client.DisconnectAsync(quit, cancellationToken);
             _log.LogInformation("Imap disconnected.");
         }
 
