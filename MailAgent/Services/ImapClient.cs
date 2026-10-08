@@ -32,7 +32,9 @@ namespace FeuerSoftware.MailAgent.Services
             EnsureConnected();
 
             var inbox = _client.Inbox;
-            await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+            // ReadWrite (SELECT) for polling too: on Exchange Online a session that has ever issued SELECT
+            // (MarkMessageSeenByUID) stops seeing new mails via EXAMINE + SEARCH, so never mix the two modes.
+            await inbox.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
             var mailIds = await inbox.SearchAsync(MailKit.Search.SearchQuery.NotSeen, cancellationToken);
 
