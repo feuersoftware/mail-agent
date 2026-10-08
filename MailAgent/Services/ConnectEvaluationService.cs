@@ -112,7 +112,7 @@ namespace FeuerSoftware.MailAgent.Services
                 Reporter = hasReporter ? new ReporterModel()
                 {
                     Name = reporterName,
-                    Phone = reporterPhone,
+                    PhoneNumber = reporterPhone,
                 } : null,
                 Keyword = keyword,
                 Facts = facts,
