@@ -33,6 +33,17 @@ namespace FeuerSoftware.MailAgent.Services
                 });
             }
 
+            if (!Uri.IsWellFormedUriString(_options.ConnectApiUrl, UriKind.Absolute))
+            {
+                issues.Add(new ConfigurationIssue
+                {
+                    Severity = IssueSeverity.Error,
+                    Category = "ConnectApiUrl",
+                    Message = $"ConnectApiUrl '{_options.ConnectApiUrl}' is not a valid absolute URL.",
+                    Hint = "Set 'ConnectApiUrl' to e.g. 'https://connectapi.feuersoftware.com'."
+                });
+            }
+
             if (!_options.EmailSettings.Any())
             {
                 issues.Add(new ConfigurationIssue
@@ -159,6 +170,7 @@ namespace FeuerSoftware.MailAgent.Services
             Console.WriteLine($"Email Mode:          {_options.EMailMode}");
             Console.WriteLine($"Polling Interval:    {_options.EMailPollingIntervalSeconds} seconds");
             Console.WriteLine($"Output Path:         {_options.OutputPath}");
+            Console.WriteLine($"Connect API URL:     {_options.ConnectApiUrl}");
             Console.WriteLine();
 
             Console.ForegroundColor = ConsoleColor.Yellow;
