@@ -134,6 +134,7 @@ Weitere Einstellungen:
 * `IgnoreCertificateErrors` -> Auf `true`, wenn Zertifikatsfehler (z.B. für Exchange) ignoriert werden sollen.
 * `HeartbeatInterval` -> Intervall für das Senden von Heartbeats. (z.B. an UptimeRobot)
 * `HeartbeatUrl` -> HTTP-GET Endpunkt, der für Heartbeats aufgerufen werden soll
+* `ConnectApiUrl` -> Basis-URL der Connect-API (Standard: `https://connectapi.feuersoftware.com`)
 * `O365ClientId` -> Die Client-ID für die O365 OAuth2-Authentifizierung (nur erforderlich bei Verwendung von `O365` Authentifizierung). Der Standardwert ist eine öffentliche Client-ID.
 * `DisableEmailAgeThreshold` -> Deaktiviert die 15-Minuten-Altersschwelle für E-Mails. **Nur für Testzwecke!** Standardmäßig werden E-Mails, die älter als 15 Minuten sind, ignoriert und als gelesen markiert. Wenn diese Einstellung auf `true` gesetzt wird, werden alle ungelesenen E-Mails unabhängig vom Alter verarbeitet. Dies ist nützlich zum Testen von regulären Ausdrücken mit älteren E-Mails. **Warnung:** Diese Einstellung sollte in Produktivumgebungen NICHT aktiviert werden! Bei Aktivierung wird beim Start eine deutliche Warnung angezeigt.
 

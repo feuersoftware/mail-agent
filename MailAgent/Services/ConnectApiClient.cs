@@ -1,4 +1,6 @@
 ﻿using FeuerSoftware.MailAgent.Models;
+using FeuerSoftware.MailAgent.Options;
+using Microsoft.Extensions.Options;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -9,16 +11,17 @@ namespace FeuerSoftware.MailAgent.Services
     {
         private readonly ILogger<ConnectApiClient> _log;
         private readonly HttpClient _httpClient;
-        private readonly string _connectBaseUrl = "https://connectapi.feuersoftware.com";
 
         public ConnectApiClient(
-            [NotNull] ILogger<ConnectApiClient> log)
+            [NotNull] ILogger<ConnectApiClient> log,
+            [NotNull] IOptions<MailAgentOptions> options)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            var connectApiUrl = options?.Value?.ConnectApiUrl ?? throw new ArgumentNullException(nameof(options));
 
             _httpClient = new HttpClient
             {
-                BaseAddress = new Uri(_connectBaseUrl),
+                BaseAddress = new Uri(connectApiUrl),
                 Timeout = TimeSpan.FromSeconds(30),
             };
         }

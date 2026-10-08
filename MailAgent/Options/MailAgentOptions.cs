@@ -25,6 +25,8 @@ namespace FeuerSoftware.MailAgent.Options
 
         public string HeartbeatUrl { get; set; } = string.Empty;
 
+        public string ConnectApiUrl { get; set; } = "https://connectapi.feuersoftware.com";
+
         public string O365ClientId { get; set; } = string.Empty;
 
         public bool DisableEmailAgeThreshold { get; set; } = false;
