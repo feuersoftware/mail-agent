@@ -43,21 +43,30 @@ namespace FeuerSoftware.MailAgent.Services
                 return eMails;
             }
 
-            // Fetch only headers first; download full messages only for mails that match the filters.
-            var summaries = await inbox.FetchAsync(mailIds, MessageSummaryItems.Envelope | MessageSummaryItems.UniqueId);
+            // Fetch only the raw header block first; download full messages only for mails that match the filters.
+            var summaries = await inbox.FetchAsync(mailIds, MessageSummaryItems.Headers | MessageSummaryItems.UniqueId);
+            var ignoredIds = new List<UniqueId>();
 
             foreach (var summary in summaries)
             {
-                var id = summary.UniqueId.Id.ToString();
+                var (subject, sender) = MailFilter.GetSubjectAndSender(summary.Headers ?? await inbox.GetHeadersAsync(summary.UniqueId));
 
-                if (!filter.Matches(summary.Envelope?.Subject, summary.Envelope?.From.FirstOrDefault()?.ToString()))
+                if (!filter.Matches(subject, sender))
                 {
+                    _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignore and mark as read.");
+                    ignoredIds.Add(summary.UniqueId);
                     continue;
                 }
 
                 var mail = await inbox.GetMessageAsync(summary.UniqueId);
 
-                eMails.Add((message: mail, id: id));
+                eMails.Add((message: mail, id: summary.UniqueId.Id.ToString()));
+            }
+
+            if (ignoredIds.Count > 0)
+            {
+                await inbox.OpenAsync(FolderAccess.ReadWrite);
+                await inbox.AddFlagsAsync(ignoredIds, MessageFlags.Seen, true);
             }
 
             return eMails;

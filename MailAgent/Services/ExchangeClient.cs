@@ -54,12 +54,7 @@ namespace FeuerSoftware.MailAgent.Services
                 sw1.Stop();
                 _log.LogDebug($"FindItems took '{sw1.ElapsedMilliseconds}ms'");
 
-                // Filter on FindItems properties first; only matching mails are bound with full MIME content.
-                var filteredItems = result.Items
-                    .OfType<EmailMessage>()
-                    .Where(i => !i.IsRead)
-                    .Where(i => filter.Matches(i.Subject, i.From is null ? null : $"{i.From.Name} <{i.From.Address}>"))
-                    .ToList();
+                var filteredItems = result.Items.OfType<EmailMessage>().Where(i => !i.IsRead);
 
                 if (!filteredItems.Any())
                 {
@@ -84,6 +79,17 @@ namespace FeuerSoftware.MailAgent.Services
                     using (var stream = new MemoryStream(messageData, false))
                     {
                         message = await MimeMessage.LoadAsync(stream);
+                    }
+
+                    // Filter on the MIME headers: EWS item properties may carry an internal X500 sender address instead of SMTP.
+                    var (subject, sender) = MailFilter.GetSubjectAndSender(message.Headers);
+
+                    if (!filter.Matches(subject, sender))
+                    {
+                        _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignore and mark as read.");
+                        item.IsRead = true;
+                        await item.Update(ConflictResolutionMode.AutoResolve);
+                        continue;
                     }
 
                     eMails.Add((message, item.Id.UniqueId));
