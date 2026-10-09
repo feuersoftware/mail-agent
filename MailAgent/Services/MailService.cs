@@ -1,4 +1,4 @@
-﻿using FeuerSoftware.MailAgent.Extensions;
+using FeuerSoftware.MailAgent.Extensions;
 using FeuerSoftware.MailAgent.Models;
 using FeuerSoftware.MailAgent.Options;
 using Microsoft.Extensions.Options;
@@ -12,6 +12,8 @@ namespace FeuerSoftware.MailAgent.Services
 {
     internal class MailService : IMailService, IDisposable
     {
+        private sealed record MailClientEntry(IMailClient Client, AsyncLock Lock, string SiteName);
+
         private readonly MailAgentOptions _options;
         private readonly IMailClientFactory _mailClientFactory;
         private readonly ILogger<MailService> _log;
@@ -19,15 +21,21 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly Subject<(MimeMessage, SiteModel)> _eMailsObservable = new();
         private readonly List<IDisposable?> _eMailsSubscriptions = new();
         private readonly List<IDisposable?> _reconnectionSubscriptions = new();
-        private readonly List<IMailClient> _mailClients = new();
-        private readonly AsyncLock _asyncLock = new();
-        private IDisposable? _isLocked;
+        private readonly List<MailClientEntry> _mailClients = new();
+        private CancellationTokenSource? _stoppingCts;
+
+        private readonly MailOperationTimeouts _timeouts;
+
+        // Shutdown isn't real-time critical: allow a clean LOGOUT handshake.
+        private static readonly TimeSpan ShutdownDisconnectTimeout = TimeSpan.FromSeconds(30);
 
         public MailService(
             [NotNull] IMailClientFactory mailClientFactory,
             [NotNull] IOptions<MailAgentOptions> options,
-            [NotNull] ILogger<MailService> log)
+            [NotNull] ILogger<MailService> log,
+            MailOperationTimeouts? timeouts = null)
         {
+            _timeouts = timeouts ?? MailOperationTimeouts.Default;
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _mailClientFactory = mailClientFactory ?? throw new ArgumentNullException(nameof(mailClientFactory));
             _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -38,9 +46,26 @@ namespace FeuerSoftware.MailAgent.Services
 
         public async Task StartPollingAsync(CancellationToken cancellationToken)
         {
+            if (_options.EMailPollingIntervalSeconds < 4)
+            {
+                throw new ArgumentOutOfRangeException("Setting EMailPollingIntervalSeconds lower than 4 is not supported!");
+            }
+
+            // The token the .NET Generic Host passes into IHostedService.StartAsync is disposed once
+            // host startup completes and can never be cancelled again for the rest of the process's
+            // lifetime - StopAsync (a separate IHostedService.StopAsync call, with its own live token)
+            // is the only real shutdown signal. `_stoppingCts` is linked to `cancellationToken` for
+            // correctness in case that's ever not true (e.g. in tests), but it's the one actually
+            // cancelled by StopAsync below, and it's what every CreateBoundedToken call is bounded by.
+            _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var stoppingToken = _stoppingCts.Token;
+
             foreach (var siteEmailSetting in _options.EmailSettings)
             {
                 var client = _mailClientFactory.CreateClient(siteEmailSetting);
+                var clientLock = new AsyncLock();
+                var entry = new MailClientEntry(client, clientLock, siteEmailSetting.Name);
+                _mailClients.Add(entry);
 
                 var site = new SiteModel()
                 {
@@ -48,152 +73,237 @@ namespace FeuerSoftware.MailAgent.Services
                     ApiKey = siteEmailSetting.ApiKey,
                 };
 
+                if (await TryConnectAsync(client, siteEmailSetting, stoppingToken).ConfigureAwait(false))
+                {
+                    WireUpSubscriptions(entry, siteEmailSetting, site, stoppingToken);
+                }
+                else
+                {
+                    // Keep retrying in the background instead of permanently excluding this mailbox
+                    // from polling for the rest of the process's lifetime - a transient startup
+                    // condition (DNS, an auth-service hiccup, a slow network) shouldn't require a full
+                    // restart to recover from.
+                    _ = RetryConnectAsync(entry, siteEmailSetting, site, stoppingToken);
+                }
+            }
+        }
+
+        private async Task<bool> TryConnectAsync(IMailClient client, SiteEmailSetting siteEmailSetting, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var connectCts = CreateBoundedToken(cancellationToken, _timeouts.Connect);
+
+                await client.Connect(
+                    siteEmailSetting.EMailHost,
+                    siteEmailSetting.EMailPort,
+                    siteEmailSetting.EMailUsername,
+                    siteEmailSetting.EMailPassword,
+                    connectCts.Token);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _log.LogCritical(ex, $"Failed to connect with mailserver. Using host '{siteEmailSetting.EMailHost}' and username '{siteEmailSetting.EMailUsername}'.");
+                return false;
+            }
+        }
+
+        private async Task RetryConnectAsync(MailClientEntry entry, SiteEmailSetting siteEmailSetting, SiteModel site, CancellationToken cancellationToken)
+        {
+            var failures = 0;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
                 try
                 {
-                    await client.Connect(
-                        siteEmailSetting.EMailHost,
-                        siteEmailSetting.EMailPort,
-                        siteEmailSetting.EMailUsername,
-                        siteEmailSetting.EMailPassword);
+                    await Task.Delay(_timeouts.Backoff(++failures), cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException)
                 {
-                    _log.LogCritical(ex, $"Failed to connect with mailserver. Using host '{siteEmailSetting.EMailHost}' and username '{siteEmailSetting.EMailUsername}'.");
                     return;
                 }
 
-                var reconnectionSubscription = Observable
-                    .Interval(TimeSpan.FromMinutes(60))
-                    .SubscribeAsyncSafe(async _ =>
-                    {
-                        using (_isLocked = await _asyncLock.LockAsync())
-                        {
-                            _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
-                            await client.Disconnect().ConfigureAwait(false);
-                            await client.Connect(
-                                siteEmailSetting.EMailHost,
-                                siteEmailSetting.EMailPort,
-                                siteEmailSetting.EMailUsername,
-                                siteEmailSetting.EMailPassword)
-                            .ConfigureAwait(false);
-                        }
-                    },
-                    e =>
-                    {
-                        _log.LogError(e, "Failed to reconnect.");
-                        _isLocked?.Dispose();
-                    },
-                    () => _log.LogDebug("Reconnection subscription completed."));
+                _log.LogInformation($"Retrying initial connect for '{siteEmailSetting.Name}'...");
 
-                if (_options.EMailPollingIntervalSeconds < 4)
+                if (await TryConnectAsync(entry.Client, siteEmailSetting, cancellationToken).ConfigureAwait(false))
                 {
-                    throw new ArgumentOutOfRangeException("Setting EMailPollingIntervalSeconds lower than 4 is not supported!");
+                    WireUpSubscriptions(entry, siteEmailSetting, site, cancellationToken);
+                    return;
                 }
+            }
+        }
 
-                var mailSubscription = Observable
-                    .Interval(TimeSpan.FromSeconds(_options.EMailPollingIntervalSeconds))
-                    .TakeWhile(x => !cancellationToken.IsCancellationRequested)
-                    .SubscribeAsyncSafe(async x =>
+        private void WireUpSubscriptions(MailClientEntry entry, SiteEmailSetting siteEmailSetting, SiteModel site, CancellationToken cancellationToken)
+        {
+            var client = entry.Client;
+            var clientLock = entry.Lock;
+            var reconnectFailures = 0;
+
+            var reconnectionSubscription = Observable
+                .Interval(_timeouts.ScheduledReconnect)
+                .SubscribeAsyncSafe(async _ =>
+                {
+                    using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
+
+                    using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
                     {
-                        using (_isLocked = await _asyncLock.LockAsync())
+                        await ReconnectAsync(client, siteEmailSetting, cancellationToken).ConfigureAwait(false);
+                    }
+                },
+                _log.LogAndContinue($"Failed to reconnect ({siteEmailSetting.Name})."),
+                () => _log.LogWarning($"Reconnection subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
+
+            var mailSubscription = Observable
+                .Interval(TimeSpan.FromSeconds(_options.EMailPollingIntervalSeconds))
+                .TakeWhile(x => !cancellationToken.IsCancellationRequested)
+                .SubscribeAsyncSafe(async x =>
+                {
+                    using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
+
+                    using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
+                    {
+                        // Own budget starting after the lock is held, so waiting for a reconnect doesn't eat it.
+                        using var tickCts = CreateBoundedToken(cancellationToken, _timeouts.FetchTick);
+                        var tickToken = tickCts.Token;
+
+                        ClearOutdatedAlreadySeenAt();
+
+                        var eMails = await client.GetUnseenMails(tickToken).ConfigureAwait(false);
+
+                        var eMailsToProcess = new List<(MimeMessage message, string id)>();
+
+                        foreach (var eMail in eMails)
                         {
-                            ClearOutdatedAlreadySeenAt();
+                            var alreadySeen = _seenMessages.TryGetValue(eMail.id, out var seenTimestamp);
+                            var sender = eMail.message.From[0].ToString();
+                            var shouldBeIgnoredSubject = !string.IsNullOrEmpty(siteEmailSetting.EMailSubjectFilter)
+                                && !eMail.message.Subject.Contains(siteEmailSetting.EMailSubjectFilter, StringComparison.InvariantCultureIgnoreCase);
+                            var shouldBeIgnoredSender = !string.IsNullOrEmpty(siteEmailSetting.EMailSenderFilter)
+                                && !sender.Contains(siteEmailSetting.EMailSenderFilter, StringComparison.InvariantCultureIgnoreCase);
 
-                            var eMails = await client.GetUnseenMails().ConfigureAwait(false);
-
-                            var eMailsToProcess = new List<(MimeMessage message, string id)>();
-
-                            foreach (var eMail in eMails)
+                            // Message is too old
+                            if (!_options.DisableEmailAgeThreshold && (DateTimeOffset.Now - eMail.message.Date).Duration() > TimeSpan.FromMinutes(15))
                             {
-                                var alreadySeen = _seenMessages.TryGetValue(eMail.id, out var seenTimestamp);
-                                var sender = eMail.message.From[0].ToString();
-                                var shouldBeIgnoredSubject = !string.IsNullOrEmpty(siteEmailSetting.EMailSubjectFilter)
-                                    && !eMail.message.Subject.Contains(siteEmailSetting.EMailSubjectFilter, StringComparison.InvariantCultureIgnoreCase);
-                                var shouldBeIgnoredSender = !string.IsNullOrEmpty(siteEmailSetting.EMailSenderFilter)
-                                    && !sender.Contains(siteEmailSetting.EMailSenderFilter, StringComparison.InvariantCultureIgnoreCase);
+                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' received delayed. EMail was sent at {eMail.message.Date.ToLocalTime()}. Ignore and mark as read.");
 
-                                // Message is too old
-                                if (!_options.DisableEmailAgeThreshold && (DateTimeOffset.Now - eMail.message.Date).Duration() > TimeSpan.FromMinutes(15))
-                                {
-                                    _log.LogInformation($"Mail with subject '{eMail.message.Subject}' received delayed. EMail was sent at {eMail.message.Date.ToLocalTime()}. Ignore and mark as read.");
-
-                                    await client.MarkMessageSeenByUID(eMail.id).ConfigureAwait(false);
-                                    continue;
-                                }
-
-                                if (alreadySeen && (DateTime.Now - seenTimestamp).Duration() <= TimeSpan.FromMinutes(5))
-                                {
-                                    _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and ID '{eMail.id}' already processed at '{seenTimestamp}'. Ignoring...");
-                                    continue;
-                                }
-
-                                if (shouldBeIgnoredSender)
-                                {
-                                    _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and sender '{sender}' failed sender-filter. Ignoring.");
-                                    continue;
-                                }
-
-                                if (shouldBeIgnoredSubject)
-                                {
-                                    _log.LogInformation($"Mail with subject '{eMail.message.Subject}' failed subject-filter. Ignoring.");
-                                    continue;
-                                }
-
-                                _log.LogDebug("EMail passed filters.");
-
-                                _seenMessages.Add(eMail.id, DateTime.Now);
-                                eMailsToProcess.Add(eMail);
-                                await client.MarkMessageSeenByUID(eMail.id).ConfigureAwait(false);
+                                await client.MarkMessageSeenByUID(eMail.id, tickToken).ConfigureAwait(false);
+                                continue;
                             }
 
-                            foreach (var (message, id) in eMailsToProcess)
+                            if (alreadySeen && (DateTime.Now - seenTimestamp).Duration() <= TimeSpan.FromMinutes(5))
                             {
-                                (MimeMessage, SiteModel) tuple = (message, site);
-                                _eMailsObservable.OnNext(tuple);
+                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and ID '{eMail.id}' already processed at '{seenTimestamp}'. Ignoring...");
+                                continue;
                             }
+
+                            if (shouldBeIgnoredSender)
+                            {
+                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and sender '{sender}' failed sender-filter. Ignoring.");
+                                continue;
+                            }
+
+                            if (shouldBeIgnoredSubject)
+                            {
+                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' failed subject-filter. Ignoring.");
+                                continue;
+                            }
+
+                            _log.LogDebug("EMail passed filters.");
+
+                            _seenMessages.Add(eMail.id, DateTime.Now);
+                            eMailsToProcess.Add(eMail);
+                            await client.MarkMessageSeenByUID(eMail.id, tickToken).ConfigureAwait(false);
                         }
-                    },
-                    async ex =>
+
+                        foreach (var (message, id) in eMailsToProcess)
+                        {
+                            (MimeMessage, SiteModel) tuple = (message, site);
+                            _eMailsObservable.OnNext(tuple);
+                        }
+                    }
+                },
+                async ex =>
+                {
+                    try
                     {
+                        using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);
+
+                        using (await clientLock.LockAsync(lockWaitCts.Token).ConfigureAwait(false))
+                        {
+                            _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
+                            await ReconnectAsync(client, siteEmailSetting, cancellationToken).ConfigureAwait(false);
+                        }
+
+                        reconnectFailures = 0;
+                    }
+                    catch (Exception otherEx)
+                    {
+                        _log.LogError(otherEx, $"Failed to handle exception from fetching mails for site '{siteEmailSetting.Name}'.");
+
+                        // Without a delay a persistent failure (DNS, auth) would retry on every poll tick
+                        // plus a burst from ticks queued meanwhile (O365 throttling). Delaying here also holds
+                        // back those queued ticks, since this handler is serialized with them. The first
+                        // attempt after a fresh failure is never delayed; the cap stays low (real-time).
                         try
                         {
-                            _isLocked?.Dispose();
-
-                            using (_isLocked = await _asyncLock.LockAsync())
-                            {
-                                _log.LogError(ex, $"Failed to fetch mails for site '{siteEmailSetting.Name}'.");
-                                _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
-                                await client.Disconnect().ConfigureAwait(false);
-                                await client.Connect(
-                                    siteEmailSetting.EMailHost,
-                                    siteEmailSetting.EMailPort,
-                                    siteEmailSetting.EMailUsername,
-                                    siteEmailSetting.EMailPassword)
-                                .ConfigureAwait(false);
-                            }
+                            await Task.Delay(_timeouts.Backoff(++reconnectFailures), cancellationToken).ConfigureAwait(false);
                         }
-                        catch (Exception otherEx)
+                        catch (OperationCanceledException)
                         {
-                            _isLocked?.Dispose();
-                            _log.LogError(otherEx, "Failed to handle Exception from fetching Mails.");
+                            // shutting down
                         }
-                    },
-                    () => _log.LogDebug("MailSubscription completed."));
+                    }
+                },
+                () => _log.LogWarning($"Mail subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
 
-                _mailClients.Add(client);
-                _reconnectionSubscriptions.Add(reconnectionSubscription);
-                _eMailsSubscriptions.Add(mailSubscription);
-            }
+            _reconnectionSubscriptions.Add(reconnectionSubscription);
+            _eMailsSubscriptions.Add(mailSubscription);
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)
         {
             _eMailsObservable.OnCompleted();
 
-            foreach (var client in _mailClients)
+            // Interrupts any in-flight polling/reconnect work bounded by CreateBoundedToken (see
+            // StartPollingAsync/WireUpSubscriptions) instead of leaving it to run out its own local
+            // timeout, and stops the retry-connect loop for any still-unreachable mailbox.
+            _stoppingCts?.Cancel();
+
+            foreach (var subscription in _eMailsSubscriptions)
             {
-                await client.Disconnect().ConfigureAwait(false);
+                subscription?.Dispose();
             }
+
+            foreach (var subscription in _reconnectionSubscriptions)
+            {
+                subscription?.Dispose();
+            }
+
+            // Each client is disconnected in parallel, and only after acquiring its own lock (bounded
+            // by the same shutdown timeout) - so shutdown never calls Disconnect concurrently with an
+            // in-flight operation on the same non-thread-safe mail client. Still honors the host's own
+            // shutdown token (the live "grace period ending" signal from HostOptions.ShutdownTimeout),
+            // so a more urgent stop request cuts this short instead of being ignored.
+            var disconnectTasks = _mailClients.Select(async entry =>
+            {
+                try
+                {
+                    using var disconnectCts = CreateBoundedToken(cancellationToken, ShutdownDisconnectTimeout);
+
+                    using (await entry.Lock.LockAsync(disconnectCts.Token).ConfigureAwait(false))
+                    {
+                        await entry.Client.Disconnect(cancellationToken: disconnectCts.Token).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, $"Failed to cleanly disconnect '{entry.SiteName}' during shutdown.");
+                }
+            });
+
+            await Task.WhenAll(disconnectTasks).ConfigureAwait(false);
         }
 
         public void Dispose()
@@ -208,12 +318,51 @@ namespace FeuerSoftware.MailAgent.Services
                 subscription?.Dispose();
             }
 
-            foreach (var client in _mailClients)
+            foreach (var entry in _mailClients)
             {
-                client?.Dispose();
+                entry.Client?.Dispose();
             }
 
-            _isLocked?.Dispose();
+            _stoppingCts?.Dispose();
+        }
+
+        private static CancellationTokenSource CreateBoundedToken(CancellationToken outer, TimeSpan timeout)
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(outer);
+            cts.CancelAfter(timeout);
+            return cts;
+        }
+
+        private async Task ReconnectAsync(IMailClient client, SiteEmailSetting siteEmailSetting, CancellationToken cancellationToken)
+        {
+            _log.LogInformation($"Reconnecting ({siteEmailSetting.Name})...");
+
+            try
+            {
+                // quit:false - the connection is dead or about to be replaced, so don't wait for a LOGOUT
+                // round trip; just close the socket.
+                using var disconnectCts = CreateBoundedToken(cancellationToken, _timeouts.Disconnect);
+                await client.Disconnect(quit: false, disconnectCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // A connection broken enough to need reconnecting is often also broken enough that it
+                // can't be disconnected cleanly - log and still attempt Connect, since that's what
+                // actually matters for recovery, instead of leaving the mailbox disconnected until the
+                // next scheduled attempt.
+                _log.LogWarning(ex, $"Failed to cleanly disconnect '{siteEmailSetting.Name}' before reconnecting; attempting to connect anyway.");
+            }
+
+            using (var connectCts = CreateBoundedToken(cancellationToken, _timeouts.Connect))
+            {
+                await client.Connect(
+                    siteEmailSetting.EMailHost,
+                    siteEmailSetting.EMailPort,
+                    siteEmailSetting.EMailUsername,
+                    siteEmailSetting.EMailPassword,
+                    connectCts.Token)
+                .ConfigureAwait(false);
+            }
         }
 
         private void ClearOutdatedAlreadySeenAt()
