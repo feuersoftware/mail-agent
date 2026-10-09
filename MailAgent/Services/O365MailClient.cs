@@ -24,16 +24,26 @@ namespace FeuerSoftware.MailAgent.Services
         {
             _log.LogDebug($"Connecting to O365 IMAP-Host '{host}' on port '{port}' with username '{username}' using OAuth2...");
 
-            await _client.ConnectAsync(host, port, SecureSocketOptions.SslOnConnect, cancellationToken);
+            // Longer socket timeout only for connect + AUTH (Exchange Online sometimes answers AUTHENTICATE only
+            // after >15 s; a slow but alive login must not be aborted), restored to IoInactivity afterwards.
+            _client.Timeout = (int)MailOperationTimeouts.Default.ConnectIoInactivity.TotalMilliseconds;
+            try
+            {
+                await _client.ConnectAsync(host, port, SecureSocketOptions.SslOnConnect, cancellationToken);
 
-            // Get OAuth2 access token. allowInteractive is always false here: this path runs from
-            // automatic background (re)connects while holding the per-mailbox lock, where an interactive
-            // browser prompt could never be completed and would otherwise hang that lock forever.
-            var accessToken = await _authService.GetAccessTokenAsync(username, allowInteractive: false, cancellationToken);
+                // Get OAuth2 access token. allowInteractive is always false here: this path runs from
+                // automatic background (re)connects while holding the per-mailbox lock, where an interactive
+                // browser prompt could never be completed and would otherwise hang that lock forever.
+                var accessToken = await _authService.GetAccessTokenAsync(username, allowInteractive: false, cancellationToken);
 
-            // Authenticate using OAuth2
-            var oauth2 = new SaslMechanismOAuth2(username, accessToken);
-            await _client.AuthenticateAsync(oauth2, cancellationToken);
+                // Authenticate using OAuth2
+                var oauth2 = new SaslMechanismOAuth2(username, accessToken);
+                await _client.AuthenticateAsync(oauth2, cancellationToken);
+            }
+            finally
+            {
+                _client.Timeout = (int)MailOperationTimeouts.Default.IoInactivity.TotalMilliseconds;
+            }
 
             _log.LogInformation($"Connected to O365 IMAP-Host '{host}' with username '{username}' using OAuth2.");
         }

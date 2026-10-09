@@ -8,6 +8,14 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly ILogger<O365AuthenticationService> _log;
         private readonly ITokenStorageService _tokenStorage;
         private readonly IPublicClientApplication _publicClientApp;
+
+        // Storage key of the shared MSAL cache blob (see the cache callbacks in the constructor).
+        internal const string TokenCacheKey = "msal-token-cache";
+
+        // Last forced refresh per user: a connect right after one (e.g. reconnect retries during an outage)
+        // must not hit Azure AD again just because the fresh token is still shorter than TokenMinValidity.
+        private static readonly TimeSpan ForceRefreshCooldown = TimeSpan.FromMinutes(5);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastForcedRefresh = new(StringComparer.OrdinalIgnoreCase);
         private readonly string[] _scopes = new[] { 
             "https://outlook.office365.com/IMAP.AccessAsUser.All",
             "https://outlook.office365.com/POP.AccessAsUser.All",
@@ -33,28 +41,23 @@ namespace FeuerSoftware.MailAgent.Services
                 .WithAuthority(AzureCloudInstance.AzurePublic, "common")
                 .WithRedirectUri("http://localhost")
                 .Build();
+            // One shared cache blob for all accounts. GetAccountsAsync (public client) calls the callbacks with
+            // neither Account nor SuggestedCacheKey, so a per-user key would never load anything after a process
+            // start (=> no account found => interactive login on every start). A shared blob is also always
+            // the latest state of every account, unlike per-user snapshots that diverge from each other.
             _publicClientApp.UserTokenCache.SetBeforeAccessAsync(async args =>
             {
-                var username = args.Account?.Username ?? args.SuggestedCacheKey;
-                if (!string.IsNullOrWhiteSpace(username))
+                var tokenData = await _tokenStorage.GetTokenAsByteAsync(TokenCacheKey);
+                if (tokenData != null)
                 {
-                    var tokenData = await _tokenStorage.GetTokenAsByteAsync(username);
-                    if (tokenData != null)
-                    {
-                        args.TokenCache.DeserializeMsalV3(tokenData);
-                    }
+                    args.TokenCache.DeserializeMsalV3(tokenData);
                 }
             });
             _publicClientApp.UserTokenCache.SetAfterAccessAsync(async args =>
             {
                 if (args.HasStateChanged)
                 {
-                    var username = args.Account?.Username;
-                    if (!string.IsNullOrWhiteSpace(username))
-                    {
-                        var tokenData = args.TokenCache.SerializeMsalV3();
-                        await _tokenStorage.SaveTokenByteAsync(username, tokenData);
-                    }
+                    await _tokenStorage.SaveTokenByteAsync(TokenCacheKey, args.TokenCache.SerializeMsalV3());
                 }
             });
         }
@@ -79,6 +82,30 @@ namespace FeuerSoftware.MailAgent.Services
                             .AcquireTokenSilent(_scopes, account)
                             .ExecuteAsync(cancellationToken)
                             .WaitAsync(cancellationToken);
+
+                        // A still-valid cached token may expire before the next scheduled reconnect (the session
+                        // then dies with "AccessTokenExpired"), so renew it now if it is too short-lived.
+                        if (result.ExpiresOn - DateTimeOffset.UtcNow < MailOperationTimeouts.Default.TokenMinValidity
+                            && DateTimeOffset.UtcNow - _lastForcedRefresh.GetValueOrDefault(username) > ForceRefreshCooldown)
+                        {
+                            _lastForcedRefresh[username] = DateTimeOffset.UtcNow;
+
+                            try
+                            {
+                                result = await _publicClientApp
+                                    .AcquireTokenSilent(_scopes, account)
+                                    .WithForceRefresh(true)
+                                    .ExecuteAsync(cancellationToken)
+                                    .WaitAsync(cancellationToken);
+
+                                _log.LogDebug($"Refreshed token for {MaskUsername(username)}, valid until {result.ExpiresOn:u}");
+                            }
+                            catch (MsalException ex)
+                            {
+                                // The cached token is still usable now; the reactive reconnect covers its expiry.
+                                _log.LogWarning(ex, $"Could not renew the access token for {MaskUsername(username)}; using the cached one (valid until {result.ExpiresOn:u}).");
+                            }
+                        }
 
                         _log.LogDebug($"Acquired token silently for {MaskUsername(username)}");
                         return result.AccessToken;

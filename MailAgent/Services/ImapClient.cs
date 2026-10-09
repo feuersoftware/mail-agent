@@ -19,8 +19,18 @@ namespace FeuerSoftware.MailAgent.Services
         public async Task Connect(string host, int port, string username, string password, CancellationToken cancellationToken = default)
         {
             _log.LogDebug($"Connecting to IMAP-Host '{host}' on port '{port}' with username '{username}'...");
-            await _client.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.SslOnConnect, cancellationToken);
-            await _client.AuthenticateAsync(username, password, cancellationToken);
+            // Longer socket timeout only for connect + AUTH (a slow but alive login must not be aborted at 15 s).
+            _client.Timeout = (int)MailOperationTimeouts.Default.ConnectIoInactivity.TotalMilliseconds;
+            try
+            {
+                await _client.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.SslOnConnect, cancellationToken);
+                await _client.AuthenticateAsync(username, password, cancellationToken);
+            }
+            finally
+            {
+                _client.Timeout = (int)MailOperationTimeouts.Default.IoInactivity.TotalMilliseconds;
+            }
+
             _log.LogInformation($"Connected to IMAP-Host '{host}' with username '{username}'.");
         }
 

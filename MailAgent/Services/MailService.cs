@@ -142,7 +142,7 @@ namespace FeuerSoftware.MailAgent.Services
             var reconnectFailures = 0;
 
             var reconnectionSubscription = Observable
-                .Interval(TimeSpan.FromMinutes(60))
+                .Interval(_timeouts.ScheduledReconnect)
                 .SubscribeAsyncSafe(async _ =>
                 {
                     using var lockWaitCts = CreateBoundedToken(cancellationToken, _timeouts.LockWait);

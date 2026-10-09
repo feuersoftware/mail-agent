@@ -86,10 +86,25 @@ public class MailOperationTimeoutsTests
     private static readonly MailOperationTimeouts D = MailOperationTimeouts.Default;
 
     [Fact]
-    public void DeadConnection_IsDetectedAndRecoveredWithinAMinute()
+    public void DeadConnection_IsDetectedFast_AndHardCapStaysBelowTwoMinutes()
     {
         Assert.InRange(D.IoInactivity, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(20));
-        Assert.True(D.WorstCaseDeadConnection + TimeSpan.FromSeconds(5) < TimeSpan.FromSeconds(60));
+        Assert.True(D.WorstCaseDeadConnection + TimeSpan.FromSeconds(5) < TimeSpan.FromSeconds(90));
+    }
+
+    [Fact]
+    public void SlowButAliveLogin_IsNotAbortedByTheOperationalIoTimeout()
+    {
+        // Exchange Online sometimes answers AUTHENTICATE only after >15 s.
+        Assert.True(D.ConnectIoInactivity > D.IoInactivity);
+        // Connect budget covers two silent phases (connect + AUTH) without cutting the second one short.
+        Assert.True(D.Connect >= D.ConnectIoInactivity * 2);
+    }
+
+    [Fact]
+    public void Token_OutlivesTheNextScheduledReconnect()
+    {
+        Assert.True(D.TokenMinValidity > D.ScheduledReconnect);
     }
 
     [Fact]

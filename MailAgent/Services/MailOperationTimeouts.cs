@@ -9,8 +9,9 @@ namespace FeuerSoftware.MailAgent.Services
     ///
     /// Worst case without a successful poll (poll interval 5 s not included):
     ///  (a) dead IMAP/O365 connection: IoInactivity 15 s + Disconnect ~0 s (quit:false closes the socket)
-    ///      + Connect 1-3 s healthy => ~16-20 s; hard cap IoInactivity + Disconnect + Connect = 50 s.
-    ///  (b) safety net only (hang without I/O timeout, e.g. MSAL; EWS): FetchTick + Disconnect + Connect = 155 s.
+    ///      + Connect 1-3 s healthy (a slow but alive login may take up to ConnectIoInactivity per phase)
+    ///      => ~16-20 s; hard cap IoInactivity + Disconnect + Connect = 80 s.
+    ///  (b) safety net only (hang without I/O timeout, e.g. MSAL; EWS): FetchTick + Disconnect + Connect = 185 s.
     ///  (c) persistent outage: reconnect attempts are spaced by <see cref="Backoff"/>, at most every 30 s.
     /// </summary>
     internal sealed record MailOperationTimeouts
@@ -20,8 +21,27 @@ namespace FeuerSoftware.MailAgent.Services
         /// <summary>MailKit socket Read/Write timeout: silence this long = dead connection. Data flowing never trips it.</summary>
         public TimeSpan IoInactivity { get; init; } = TimeSpan.FromSeconds(15);
 
-        /// <summary>Connect incl. TCP, TLS, OAuth token and AUTH (healthy: 1-3 s). Safety net, mainly for MSAL (no I/O timeout).</summary>
-        public TimeSpan Connect { get; init; } = TimeSpan.FromSeconds(30);
+        /// <summary>
+        /// Socket timeout only while connecting/authenticating (TCP+TLS, then AUTH). Exchange Online sometimes
+        /// answers AUTHENTICATE only after >15 s; such a slow but alive login must not be aborted. Restored to
+        /// <see cref="IoInactivity"/> right after, so dead connections in normal operation are still seen at 15 s.
+        /// </summary>
+        public TimeSpan ConnectIoInactivity { get; init; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Connect incl. TCP, TLS, OAuth token and AUTH (healthy: 1-3 s). Safety net, mainly for MSAL (no I/O
+        /// timeout); must cover two silent phases of <see cref="ConnectIoInactivity"/> (connect + AUTH).
+        /// </summary>
+        public TimeSpan Connect { get; init; } = TimeSpan.FromSeconds(60);
+
+        /// <summary>Interval of the scheduled reconnect (see MailService); drives <see cref="TokenMinValidity"/>.</summary>
+        public TimeSpan ScheduledReconnect { get; init; } = TimeSpan.FromMinutes(60);
+
+        /// <summary>
+        /// A token handed to Connect should outlive the next scheduled reconnect (plus margin), otherwise the
+        /// session dies with "AccessTokenExpired" in between. Cached tokens with less remaining are force-refreshed.
+        /// </summary>
+        public TimeSpan TokenMinValidity => ScheduledReconnect + TimeSpan.FromMinutes(5);
 
         /// <summary>Disconnect before a reconnect. Only a safety net: quit:false just closes the socket.</summary>
         public TimeSpan Disconnect { get; init; } = TimeSpan.FromSeconds(5);
