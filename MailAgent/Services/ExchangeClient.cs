@@ -58,7 +58,7 @@ namespace FeuerSoftware.MailAgent.Services
                 var filteredItems = result.Items
                     .OfType<EmailMessage>()
                     .Where(i => !i.IsRead)
-                    .Where(i => filter.ShouldProcess(i.Id.UniqueId, i.Subject, i.From is null ? null : $"{i.From.Name} <{i.From.Address}>"))
+                    .Where(i => filter.Matches(i.Subject, i.From is null ? null : $"{i.From.Name} <{i.From.Address}>"))
                     .ToList();
 
                 if (!filteredItems.Any())

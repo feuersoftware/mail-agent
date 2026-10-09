@@ -50,7 +50,7 @@ namespace FeuerSoftware.MailAgent.Services
             {
                 var id = summary.UniqueId.Id.ToString();
 
-                if (!filter.ShouldProcess(id, summary.Envelope?.Subject, summary.Envelope?.From.FirstOrDefault()?.ToString()))
+                if (!filter.Matches(summary.Envelope?.Subject, summary.Envelope?.From.FirstOrDefault()?.ToString()))
                 {
                     continue;
                 }

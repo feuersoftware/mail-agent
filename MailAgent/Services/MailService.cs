@@ -90,7 +90,7 @@ namespace FeuerSoftware.MailAgent.Services
                     throw new ArgumentOutOfRangeException("Setting EMailPollingIntervalSeconds lower than 4 is not supported!");
                 }
 
-                var mailFilter = new MailFilter(siteEmailSetting.EMailSubjectFilter, siteEmailSetting.EMailSenderFilter, _log);
+                var mailFilter = new MailFilter(siteEmailSetting.EMailSubjectFilter, siteEmailSetting.EMailSenderFilter);
 
                 var mailSubscription = Observable
                     .Interval(TimeSpan.FromSeconds(_options.EMailPollingIntervalSeconds))
