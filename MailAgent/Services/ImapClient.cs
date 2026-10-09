@@ -24,7 +24,7 @@ namespace FeuerSoftware.MailAgent.Services
             _log.LogInformation($"Connected to IMAP-Host '{host}' with username '{username}'.");
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter)
         {
             _log.LogDebug("Checking for unseen mails...");
             var eMails = new List<(MimeMessage message, string id)>();
@@ -38,11 +38,26 @@ namespace FeuerSoftware.MailAgent.Services
 
             _log.LogDebug($"Found {mailIds.Count} unread mails.");
 
-            foreach (var mailId in mailIds)
+            if (mailIds.Count == 0)
             {
-                var mail = await inbox.GetMessageAsync(mailId);
+                return eMails;
+            }
 
-                eMails.Add((message: mail, id: mailId.Id.ToString()));
+            // Fetch only headers first; download full messages only for mails that match the filters.
+            var summaries = await inbox.FetchAsync(mailIds, MessageSummaryItems.Envelope | MessageSummaryItems.UniqueId);
+
+            foreach (var summary in summaries)
+            {
+                var id = summary.UniqueId.Id.ToString();
+
+                if (!filter.ShouldProcess(id, summary.Envelope?.Subject, summary.Envelope?.From.FirstOrDefault()?.ToString()))
+                {
+                    continue;
+                }
+
+                var mail = await inbox.GetMessageAsync(summary.UniqueId);
+
+                eMails.Add((message: mail, id: id));
             }
 
             return eMails;

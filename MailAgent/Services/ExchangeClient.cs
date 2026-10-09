@@ -42,7 +42,7 @@ namespace FeuerSoftware.MailAgent.Services
             // We have nothing to dispose here.
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter)
         {
             try
             {
@@ -54,7 +54,12 @@ namespace FeuerSoftware.MailAgent.Services
                 sw1.Stop();
                 _log.LogDebug($"FindItems took '{sw1.ElapsedMilliseconds}ms'");
 
-                var filteredItems = result.Items.OfType<EmailMessage>().Where(i => !i.IsRead);
+                // Filter on FindItems properties first; only matching mails are bound with full MIME content.
+                var filteredItems = result.Items
+                    .OfType<EmailMessage>()
+                    .Where(i => !i.IsRead)
+                    .Where(i => filter.ShouldProcess(i.Id.UniqueId, i.Subject, i.From is null ? null : $"{i.From.Name} <{i.From.Address}>"))
+                    .ToList();
 
                 if (!filteredItems.Any())
                 {

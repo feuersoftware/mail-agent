@@ -8,7 +8,7 @@ namespace FeuerSoftware.MailAgent.Services
 
         Task Disconnect();
 
-        Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails();
+        Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter);
 
         Task MarkMessageSeenByUID(string mailId);
     }
