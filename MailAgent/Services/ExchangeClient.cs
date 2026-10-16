@@ -42,7 +42,7 @@ namespace FeuerSoftware.MailAgent.Services
             // We have nothing to dispose here.
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails()
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter)
         {
             try
             {
@@ -79,6 +79,17 @@ namespace FeuerSoftware.MailAgent.Services
                     using (var stream = new MemoryStream(messageData, false))
                     {
                         message = await MimeMessage.LoadAsync(stream);
+                    }
+
+                    // Filter on the MIME headers: EWS item properties may carry an internal X500 sender address instead of SMTP.
+                    var (subject, sender) = MailFilter.GetSubjectAndSender(message.Headers);
+
+                    if (!filter.Matches(subject, sender))
+                    {
+                        _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignore and mark as read.");
+                        item.IsRead = true;
+                        await item.Update(ConflictResolutionMode.AutoResolve);
+                        continue;
                     }
 
                     eMails.Add((message, item.Id.UniqueId));
