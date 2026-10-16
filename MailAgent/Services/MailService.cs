@@ -4,6 +4,7 @@ using FeuerSoftware.MailAgent.Options;
 using Microsoft.Extensions.Options;
 using MimeKit;
 using Nito.AsyncEx;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -17,7 +18,8 @@ namespace FeuerSoftware.MailAgent.Services
         private readonly MailAgentOptions _options;
         private readonly IMailClientFactory _mailClientFactory;
         private readonly ILogger<MailService> _log;
-        private readonly Dictionary<string, DateTime> _seenMessages;
+        // Shared by all mailbox ticks, which run in parallel: concurrent. Keyed per mailbox since IMAP UIDs are only unique within one.
+        private readonly ConcurrentDictionary<string, DateTime> _seenMessages;
         private readonly Subject<(MimeMessage, SiteModel)> _eMailsObservable = new();
         private readonly List<IDisposable?> _eMailsSubscriptions = new();
         private readonly List<IDisposable?> _reconnectionSubscriptions = new();
@@ -39,7 +41,7 @@ namespace FeuerSoftware.MailAgent.Services
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _mailClientFactory = mailClientFactory ?? throw new ArgumentNullException(nameof(mailClientFactory));
             _log = log ?? throw new ArgumentNullException(nameof(log));
-            _seenMessages = new Dictionary<string, DateTime>();
+            _seenMessages = new ConcurrentDictionary<string, DateTime>();
         }
 
         public IObservable<(MimeMessage, SiteModel)> EMails => _eMailsObservable.AsObservable();
@@ -176,7 +178,8 @@ namespace FeuerSoftware.MailAgent.Services
 
                         foreach (var eMail in eMails)
                         {
-                            var alreadySeen = _seenMessages.TryGetValue(eMail.id, out var seenTimestamp);
+                            var seenKey = $"{siteEmailSetting.Name}:{eMail.id}";
+                            var alreadySeen = _seenMessages.TryGetValue(seenKey, out var seenTimestamp);
                             var sender = eMail.message.From[0].ToString();
                             var shouldBeIgnoredSubject = !string.IsNullOrEmpty(siteEmailSetting.EMailSubjectFilter)
                                 && !eMail.message.Subject.Contains(siteEmailSetting.EMailSubjectFilter, StringComparison.InvariantCultureIgnoreCase);
@@ -212,7 +215,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                             _log.LogDebug("EMail passed filters.");
 
-                            _seenMessages.Add(eMail.id, DateTime.Now);
+                            _seenMessages[seenKey] = DateTime.Now;
                             eMailsToProcess.Add(eMail);
                             await client.MarkMessageSeenByUID(eMail.id, tickToken).ConfigureAwait(false);
                         }
@@ -256,7 +259,14 @@ namespace FeuerSoftware.MailAgent.Services
                         }
                     }
                 },
-                () => _log.LogWarning($"Mail subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
+                () =>
+                {
+                    // TakeWhile ends the sequence on shutdown; only an unexpected completion deserves a warning.
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        _log.LogWarning($"Mail subscription for '{siteEmailSetting.Name}' completed unexpectedly.");
+                    }
+                });
 
             _reconnectionSubscriptions.Add(reconnectionSubscription);
             _eMailsSubscriptions.Add(mailSubscription);
@@ -369,7 +379,7 @@ namespace FeuerSoftware.MailAgent.Services
         {
             foreach (var item in _seenMessages.Where(kvp => (kvp.Value - DateTime.Now).Duration() > TimeSpan.FromMinutes(10)))
             {
-                _seenMessages.Remove(item.Key);
+                _seenMessages.TryRemove(item.Key, out _);
             }
         }
     }

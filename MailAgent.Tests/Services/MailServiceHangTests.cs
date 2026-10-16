@@ -123,3 +123,34 @@ public class MailOperationTimeoutsTests
         Assert.True(D.ReconnectBackoffMax <= TimeSpan.FromSeconds(60));
     }
 }
+
+public class SeenMessagesTests
+{
+    [Fact]
+    public async Task SameUidInTwoMailboxes_IsDeliveredForBoth()
+    {
+        // IMAP UIDs are only unique per mailbox: the "already processed" bookkeeping must not mix them up.
+        // b's mail arrives one tick (4 s) after a's, so a's entry is already recorded when b's UID is checked.
+        FakeMailClient Inbox(int deliverOnCall) => new()
+        {
+            OnGetUnseen = (call, _) => Task.FromResult<IEnumerable<(MimeMessage message, string id)>>(
+                call == deliverOnCall ? new[] { (Mail(), "1") } : Array.Empty<(MimeMessage, string)>()),
+        };
+
+        using var service = CreateService(("a", Inbox(1)), ("b", Inbox(2)));
+        var sites = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var both = new TaskCompletionSource();
+        service.EMails.Subscribe(m =>
+        {
+            sites.Add(m.Item2.Name);
+            if (sites.Count >= 2) both.TrySetResult();
+        });
+
+        await service.StartPollingAsync(CancellationToken.None);
+        await both.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(new[] { "a", "b" }, sites.OrderBy(x => x));
+
+        await service.StopAsync(CancellationToken.None);
+    }
+}

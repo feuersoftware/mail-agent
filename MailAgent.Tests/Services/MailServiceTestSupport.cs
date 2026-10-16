@@ -43,9 +43,9 @@ internal sealed class FakeMailClient : IMailClient
     public void Dispose() { }
 }
 
-internal sealed class FakeMailClientFactory(IMailClient client) : IMailClientFactory
+internal sealed class FakeMailClientFactory(IReadOnlyDictionary<string, IMailClient> clientsBySite) : IMailClientFactory
 {
-    public IMailClient CreateClient(SiteEmailSetting settings) => client;
+    public IMailClient CreateClient(SiteEmailSetting settings) => clientsBySite[settings.Name];
 }
 
 internal static class MailServiceTestSupport
@@ -63,17 +63,23 @@ internal static class MailServiceTestSupport
     /// <summary>Generous upper bound for "was aborted by its budget (300 ms), not by something else".</summary>
     public static readonly TimeSpan AbortSlack = TimeSpan.FromSeconds(3);
 
-    public static MailService CreateService(FakeMailClient client)
+    public static MailService CreateService(FakeMailClient client) => CreateService(("test", client));
+
+    public static MailService CreateService(params (string Name, FakeMailClient Client)[] sites)
     {
         var options = new MailAgentOptions
         {
             EMailPollingIntervalSeconds = 4,
             DisableEmailAgeThreshold = true,
-            EmailSettings = { new SiteEmailSetting { Name = "test", EMailHost = "localhost" } },
         };
 
+        foreach (var (name, _) in sites)
+        {
+            options.EmailSettings.Add(new SiteEmailSetting { Name = name, EMailHost = "localhost" });
+        }
+
         return new MailService(
-            new FakeMailClientFactory(client),
+            new FakeMailClientFactory(sites.ToDictionary(s => s.Name, s => (IMailClient)s.Client)),
             Microsoft.Extensions.Options.Options.Create(options),
             NullLogger<MailService>.Instance,
             FastTimeouts);
