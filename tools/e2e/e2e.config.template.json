@@ -1,0 +1,28 @@
+{
+  "Sender": "<<ABSENDER_IN_OUTLOOK>>",
+  "MailCount": 30,
+  "MinIntervalMinutes": 10,
+  "MaxIntervalMinutes": 20,
+  "O365ClientId": "<<AZURE_APP_CLIENT_ID>>",
+  "MailAgentOptions": {
+    "EmailSettings": [
+      {
+        "Name": "E2E",
+        "ApiKey": "<<CONNECT_STANDORT_API_KEY>>",
+        "EMailHost": "outlook.office365.com",
+        "EMailPort": 993,
+        "EMailUsername": "<<UEBERWACHTES_POSTFACH>>",
+        "EMailPassword": "",
+        "EMailSenderFilter": "",
+        "AuthenticationType": "O365"
+      }
+    ],
+    "EMailPollingIntervalSeconds": 5,
+    "SecretKeyPassphrase": "",
+    "ProcessMode": "ConnectEncrypted",
+    "EMailMode": "Imap",
+    "IgnoreCertificateErrors": false,
+    "ConnectApiUrl": "https://connectapi.feuersoftware.com",
+    "DisableEmailAgeThreshold": false
+  }
+}

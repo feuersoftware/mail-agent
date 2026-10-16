@@ -68,7 +68,22 @@ namespace FeuerSoftware.MailAgent.Services
                 }
 
                 var mailbox = o365Mailboxes[i];
-                var success = await AuthenticateMailboxAsync(mailbox, i + 1, o365Mailboxes.Count);
+                bool success;
+
+                try
+                {
+                    success = await AuthenticateMailboxAsync(mailbox, i + 1, o365Mailboxes.Count, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cancelled mid-authentication rather than between mailboxes - exit cleanly instead of
+                    // falling into the interactive retry menu below, which would otherwise block on a
+                    // console prompt about what was actually just a cancellation.
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("\n⚠ Authentication cancelled.");
+                    Console.ResetColor();
+                    return false;
+                }
 
                 if (!success)
                 {
@@ -125,7 +140,7 @@ namespace FeuerSoftware.MailAgent.Services
             return allSuccess;
         }
 
-        private async Task<bool> AuthenticateMailboxAsync(SiteEmailSetting mailbox, int current, int total)
+        private async Task<bool> AuthenticateMailboxAsync(SiteEmailSetting mailbox, int current, int total, CancellationToken cancellationToken)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine($"[{current}/{total}] Authenticating: {mailbox.Name}");
@@ -145,8 +160,14 @@ namespace FeuerSoftware.MailAgent.Services
             try
             {
                 var username = mailbox.EMailUsername;
-                await _authService.GetAccessTokenAsync(username);
+                await _authService.GetAccessTokenAsync(username, allowInteractive: true, cancellationToken);
                 return true;
+            }
+            catch (OperationCanceledException)
+            {
+                // Let the caller's cancellation handling deal with this - it isn't an authentication
+                // failure and shouldn't drive the interactive retry menu below.
+                throw;
             }
             catch (Microsoft.Identity.Client.MsalException ex)
             {
