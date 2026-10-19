@@ -367,3 +367,7 @@ FodyWeavers.xsd
 # Log directory
 logs/
 MailAgent/logs/
+
+# E2E-Test (tools/e2e): Ergebnisse und Konfiguration mit Secrets
+tools/e2e/out/
+tools/e2e/e2e.config.json
