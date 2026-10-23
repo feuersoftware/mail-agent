@@ -35,7 +35,7 @@ internal sealed class FakeMailClient : IMailClient
         return Task.CompletedTask;
     }
 
-    public Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(CancellationToken cancellationToken = default)
+    public Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter, CancellationToken cancellationToken = default)
         => OnGetUnseen(Interlocked.Increment(ref _getUnseenCalls), cancellationToken);
 
     public Task MarkMessageSeenByUID(string mailId, CancellationToken cancellationToken = default) => Task.CompletedTask;
