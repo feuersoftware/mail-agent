@@ -157,6 +157,8 @@ namespace FeuerSoftware.MailAgent.Services
                 _log.LogAndContinue($"Failed to reconnect ({siteEmailSetting.Name})."),
                 () => _log.LogWarning($"Reconnection subscription for '{siteEmailSetting.Name}' completed unexpectedly."));
 
+            var mailFilter = new MailFilter(siteEmailSetting.EMailSubjectFilter, siteEmailSetting.EMailSenderFilter);
+
             var mailSubscription = Observable
                 .Interval(TimeSpan.FromSeconds(_options.EMailPollingIntervalSeconds))
                 .TakeWhile(x => !cancellationToken.IsCancellationRequested)
@@ -172,7 +174,7 @@ namespace FeuerSoftware.MailAgent.Services
 
                         ClearOutdatedAlreadySeenAt();
 
-                        var eMails = await client.GetUnseenMails(tickToken).ConfigureAwait(false);
+                        var eMails = await client.GetUnseenMails(mailFilter, tickToken).ConfigureAwait(false);
 
                         var eMailsToProcess = new List<(MimeMessage message, string id)>();
 
@@ -180,12 +182,8 @@ namespace FeuerSoftware.MailAgent.Services
                         {
                             var seenKey = $"{siteEmailSetting.Name}:{eMail.id}";
                             var alreadySeen = _seenMessages.TryGetValue(seenKey, out var seenTimestamp);
-                            var sender = eMail.message.From[0].ToString();
-                            var shouldBeIgnoredSubject = !string.IsNullOrEmpty(siteEmailSetting.EMailSubjectFilter)
-                                && !eMail.message.Subject.Contains(siteEmailSetting.EMailSubjectFilter, StringComparison.InvariantCultureIgnoreCase);
-                            var shouldBeIgnoredSender = !string.IsNullOrEmpty(siteEmailSetting.EMailSenderFilter)
-                                && !sender.Contains(siteEmailSetting.EMailSenderFilter, StringComparison.InvariantCultureIgnoreCase);
 
+                            // Only mails matching the site filters reach this point (see MailFilter).
                             // Message is too old
                             if (!_options.DisableEmailAgeThreshold && (DateTimeOffset.Now - eMail.message.Date).Duration() > TimeSpan.FromMinutes(15))
                             {
@@ -198,18 +196,6 @@ namespace FeuerSoftware.MailAgent.Services
                             if (alreadySeen && (DateTime.Now - seenTimestamp).Duration() <= TimeSpan.FromMinutes(5))
                             {
                                 _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and ID '{eMail.id}' already processed at '{seenTimestamp}'. Ignoring...");
-                                continue;
-                            }
-
-                            if (shouldBeIgnoredSender)
-                            {
-                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' and sender '{sender}' failed sender-filter. Ignoring.");
-                                continue;
-                            }
-
-                            if (shouldBeIgnoredSubject)
-                            {
-                                _log.LogInformation($"Mail with subject '{eMail.message.Subject}' failed subject-filter. Ignoring.");
                                 continue;
                             }
 

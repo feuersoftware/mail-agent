@@ -48,7 +48,7 @@ namespace FeuerSoftware.MailAgent.Services
             _log.LogInformation($"Connected to O365 IMAP-Host '{host}' with username '{username}' using OAuth2.");
         }
 
-        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(CancellationToken cancellationToken = default)
+        public async Task<IEnumerable<(MimeMessage message, string id)>> GetUnseenMails(MailFilter filter, CancellationToken cancellationToken = default)
         {
             _log.LogDebug("Checking for unseen mails...");
             var eMails = new List<(MimeMessage message, string id)>();
@@ -64,11 +64,34 @@ namespace FeuerSoftware.MailAgent.Services
 
             _log.LogDebug($"Found {mailIds.Count} unread mails.");
 
-            foreach (var mailId in mailIds)
+            if (mailIds.Count == 0)
             {
-                var mail = await inbox.GetMessageAsync(mailId, cancellationToken);
+                return eMails;
+            }
 
-                eMails.Add((message: mail, id: mailId.Id.ToString()));
+            // Fetch only the raw header block first; download full messages only for mails that match the filters.
+            var summaries = await inbox.FetchAsync(mailIds, MessageSummaryItems.Headers | MessageSummaryItems.UniqueId, cancellationToken);
+            var ignoredIds = new List<UniqueId>();
+
+            foreach (var summary in summaries)
+            {
+                var (subject, sender) = MailFilter.GetSubjectAndSender(summary.Headers ?? await inbox.GetHeadersAsync(summary.UniqueId, cancellationToken));
+
+                if (!filter.Matches(subject, sender))
+                {
+                    _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignore and mark as read.");
+                    ignoredIds.Add(summary.UniqueId);
+                    continue;
+                }
+
+                var mail = await inbox.GetMessageAsync(summary.UniqueId, cancellationToken);
+
+                eMails.Add((message: mail, id: summary.UniqueId.Id.ToString()));
+            }
+
+            if (ignoredIds.Count > 0)
+            {
+                await inbox.AddFlagsAsync(ignoredIds, MessageFlags.Seen, true, cancellationToken);
             }
 
             return eMails;
