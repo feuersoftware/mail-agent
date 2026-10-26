@@ -71,27 +71,42 @@ namespace FeuerSoftware.MailAgent.Services
 
             // Fetch only the raw header block first; download full messages only for mails that match the filters.
             var summaries = await inbox.FetchAsync(mailIds, MessageSummaryItems.Headers | MessageSummaryItems.UniqueId, cancellationToken);
-            var ignoredIds = new List<UniqueId>();
 
-            foreach (var summary in summaries)
+            // The server may send unsolicited FETCH responses; only handle the unread mails we asked for.
+            var requestedIds = new HashSet<UniqueId>(mailIds);
+            var matchingIds = new List<UniqueId>();
+            var ignored = new List<(UniqueId id, string? subject, string? sender)>();
+
+            foreach (var summary in summaries.Where(s => s.UniqueId.IsValid && requestedIds.Contains(s.UniqueId)))
             {
                 var (subject, sender) = MailFilter.GetSubjectAndSender(summary.Headers ?? await inbox.GetHeadersAsync(summary.UniqueId, cancellationToken));
 
-                if (!filter.Matches(subject, sender))
+                if (filter.Matches(subject, sender))
                 {
-                    _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignore and mark as read.");
-                    ignoredIds.Add(summary.UniqueId);
-                    continue;
+                    matchingIds.Add(summary.UniqueId);
                 }
-
-                var mail = await inbox.GetMessageAsync(summary.UniqueId, cancellationToken);
-
-                eMails.Add((message: mail, id: summary.UniqueId.Id.ToString()));
+                else
+                {
+                    ignored.Add((summary.UniqueId, subject, sender));
+                }
             }
 
-            if (ignoredIds.Count > 0)
+            // Mark ignored mails as read before downloading, so a failing download can't make them reappear (and be logged) on the next poll.
+            if (ignored.Count > 0)
             {
-                await inbox.AddFlagsAsync(ignoredIds, MessageFlags.Seen, true, cancellationToken);
+                await inbox.AddFlagsAsync(ignored.Select(i => i.id).ToList(), MessageFlags.Seen, true, cancellationToken);
+
+                foreach (var (_, subject, sender) in ignored)
+                {
+                    _log.LogInformation($"Mail with subject '{subject}' and sender '{sender}' does not match {filter}. Ignored and marked as read.");
+                }
+            }
+
+            foreach (var id in matchingIds)
+            {
+                var mail = await inbox.GetMessageAsync(id, cancellationToken);
+
+                eMails.Add((message: mail, id: id.Id.ToString()));
             }
 
             return eMails;
